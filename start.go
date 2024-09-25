@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethersphere/bee/v2/pkg/accesscontrol"
 	chaincfg "github.com/ethersphere/bee/v2/pkg/config"
 	"github.com/ethersphere/bee/v2/pkg/crypto"
 	"github.com/ethersphere/bee/v2/pkg/keystore"
@@ -36,7 +37,6 @@ type LiteOptions struct {
 	SwapEnable               bool
 	ChequebookEnable         bool
 	UsePostageSnapshot       bool
-	DebugAPIEnable           bool
 	Mainnet                  bool
 	NetworkID                uint64
 	NATAddr                  string
@@ -58,6 +58,7 @@ type signerConfig struct {
 	publicKey        *ecdsa.PublicKey
 	libp2pPrivateKey *ecdsa.PrivateKey
 	pssPrivateKey    *ecdsa.PrivateKey
+	session          accesscontrol.Session
 }
 
 type networkConfig struct {
@@ -78,6 +79,7 @@ func configureSigner(lo *LiteOptions, password string, beelogger beelog.Logger) 
 
 	var signer crypto.Signer
 	var publicKey *ecdsa.PublicKey
+	var session accesscontrol.Session
 	if p := password; p != "" {
 		password = p
 	}
@@ -88,6 +90,7 @@ func configureSigner(lo *LiteOptions, password string, beelogger beelog.Logger) 
 	}
 	signer = crypto.NewDefaultSigner(swarmPrivateKey)
 	publicKey = &swarmPrivateKey.PublicKey
+	session = accesscontrol.NewDefaultSession(swarmPrivateKey)
 
 	beelogger.Info("swarm public key", "public_key", hex.EncodeToString(crypto.EncodeSecp256k1PublicKey(publicKey)))
 
@@ -124,6 +127,7 @@ func configureSigner(lo *LiteOptions, password string, beelogger beelog.Logger) 
 		publicKey:        publicKey,
 		libp2pPrivateKey: libp2pPrivateKey,
 		pssPrivateKey:    pssPrivateKey,
+		session:          session,
 	}, nil
 }
 
@@ -140,11 +144,6 @@ func buildBeeNodeAsync(ctx context.Context, lo *LiteOptions, password string, be
 
 func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogger beelog.Logger) (*Beelite, error) {
 	var err error
-
-	debugAPIAddr := ":1635"
-	if !lo.DebugAPIEnable {
-		debugAPIAddr = ""
-	}
 
 	signerCfg, err := configureSigner(lo, password, beelogger)
 	if err != nil {
@@ -186,7 +185,12 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		return nil, errors.New("static nodes can only be configured on bootnodes")
 	}
 
-	beelite, err := NewBee(ctx, ":1634", signerCfg.publicKey, signerCfg.signer, networkID, beelogger, signerCfg.libp2pPrivateKey, signerCfg.pssPrivateKey, &node.Options{
+	var neighborhoodSuggester string
+	if networkID == chaincfg.Mainnet.NetworkID {
+		neighborhoodSuggester = "https://api.swarmscan.io/v1/network/neighborhoods/suggestion"
+	}
+
+	beelite, err := NewBee(ctx, ":1634", signerCfg.publicKey, signerCfg.signer, networkID, beelogger, signerCfg.libp2pPrivateKey, signerCfg.pssPrivateKey, signerCfg.session, &node.Options{
 		DataDir:                       lo.DataDir,
 		CacheCapacity:                 lo.CacheCapacity,
 		DBOpenFilesLimit:              lo.DBOpenFilesLimit,
@@ -194,7 +198,6 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		DBWriteBufferSize:             lo.DBWriteBufferSize,
 		DBDisableSeeksCompaction:      lo.DBDisableSeeksCompaction,
 		APIAddr:                       ":1633",
-		DebugAPIAddr:                  debugAPIAddr,
 		Addr:                          ":1634",
 		NATAddr:                       lo.NATAddr,
 		EnableWS:                      false,
@@ -231,13 +234,14 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		MutexProfile:                  false,
 		StaticNodes:                   staticNodes,
 		AllowPrivateCIDRs:             false,
-		Restricted:                    false,
-		TokenEncryptionKey:            "",
-		AdminPasswordHash:             "",
 		UsePostageSnapshot:            lo.UsePostageSnapshot,
 		EnableStorageIncentives:       true,
 		StatestoreCacheCapacity:       1000000,
 		TargetNeighborhood:            "",
+		NeighborhoodSuggester:         neighborhoodSuggester,
+		WhitelistedWithdrawalAddress:  []string{},
+		TrxDebugMode:                  false,
+		MinimumStorageRadius:          0,
 	})
 
 	return beelite, err

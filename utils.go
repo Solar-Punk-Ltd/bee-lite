@@ -2,12 +2,14 @@ package beelite
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethersphere/bee/v2/pkg/accesscontrol"
 	"github.com/ethersphere/bee/v2/pkg/api"
 	chaincfg "github.com/ethersphere/bee/v2/pkg/config"
 	"github.com/ethersphere/bee/v2/pkg/crypto"
@@ -37,6 +39,7 @@ const (
 type Beelite struct {
 	bee               *Bee
 	overlayEthAddress common.Address
+	publicKey         *ecdsa.PublicKey
 	feedFactory       feeds.Factory
 	storer            api.Storer
 	logger            beelog.Logger
@@ -44,6 +47,7 @@ type Beelite struct {
 	ctx               context.Context
 	chequebookSvc     chequebook.Service
 	post              postage.Service
+	accesscontrol     accesscontrol.Controller
 	signer            crypto.Signer
 	postageContract   postagecontract.Interface
 	stamperStore      storage.Store
@@ -153,6 +157,7 @@ func getConfigByNetworkID(networkID uint64) *networkConfig {
 var (
 	errBatchUnusable               = errors.New("batch not usable")
 	errUnsupportedDevNodeOperation = errors.New("operation not supported in dev mode")
+	errInvalidPostageBatch         = errors.New("invalid postage batch id")
 )
 
 func (p *putterSessionWrapper) Cleanup() error {
@@ -218,6 +223,35 @@ func (bl *Beelite) newStamperPutter(ctx context.Context, opts putterOptions) (st
 		PutterSession: session,
 		stamper:       stamper,
 		save:          save,
+	}, nil
+}
+
+func (bl *Beelite) newStampedPutter(ctx context.Context, opts putterOptions, stamp *postage.Stamp) (storer.PutterSession, error) {
+	if !opts.Deferred && bl.BeeNodeMode() == api.DevMode {
+		return nil, errUnsupportedDevNodeOperation
+	}
+
+	storedBatch, err := bl.batchStore.Get(stamp.BatchID())
+	if err != nil {
+		return nil, errInvalidPostageBatch
+	}
+
+	var session storer.PutterSession
+	if opts.Deferred || opts.Pin {
+		session, err = bl.storer.Upload(ctx, opts.Pin, opts.TagID)
+		if err != nil {
+			return nil, fmt.Errorf("failed creating session: %w", err)
+		}
+	} else {
+		session = bl.storer.DirectUpload()
+	}
+
+	stamper := postage.NewPresignedStamper(stamp, storedBatch.Owner)
+
+	return &putterSessionWrapper{
+		PutterSession: session,
+		stamper:       stamper,
+		save:          func() error { return nil },
 	}, nil
 }
 

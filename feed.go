@@ -32,7 +32,15 @@ func requestPipelineFactory(ctx context.Context, s storage.Putter, encrypt bool,
 	}
 }
 
-func (bl *Beelite) AddFeed(ctx context.Context, batchHex, owner, topic string, encrypt bool, rLevel redundancy.Level) (reference swarm.Address, err error) {
+func (bl *Beelite) AddFeed(ctx context.Context,
+	batchHex,
+	owner,
+	topic string,
+	act bool,
+	historyAddress swarm.Address,
+	encrypt bool,
+	rLevel redundancy.Level,
+) (reference swarm.Address, newHistoryAddress swarm.Address, err error) {
 	reference = swarm.ZeroAddress
 	ownerB, err := hex.DecodeString(owner)
 	if err != nil {
@@ -50,7 +58,7 @@ func (bl *Beelite) AddFeed(ctx context.Context, batchHex, owner, topic string, e
 	}
 	batch, err := hex.DecodeString(batchHex)
 	if err != nil {
-		err = fmt.Errorf("invalid postage batch")
+		err = errInvalidPostageBatch
 		return
 	}
 	var (
@@ -104,6 +112,15 @@ func (bl *Beelite) AddFeed(ctx context.Context, batchHex, owner, topic string, e
 		return
 	}
 
+	encryptedReference := reference
+	if act {
+		reference, newHistoryAddress, err = bl.actEncryptionHandler(ctx, putter, reference, historyAddress)
+		if err != nil {
+			bl.logger.Error(err, "access control upload failed")
+			return
+		}
+	}
+
 	err = putter.Done(reference)
 	if err != nil {
 		bl.logger.Error(err, "done split failed")
@@ -111,5 +128,6 @@ func (bl *Beelite) AddFeed(ctx context.Context, batchHex, owner, topic string, e
 		return
 	}
 
+	reference = encryptedReference
 	return
 }

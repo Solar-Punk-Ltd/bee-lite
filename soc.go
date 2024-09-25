@@ -8,7 +8,9 @@ import (
 	"io"
 
 	"github.com/ethersphere/bee/v2/pkg/cac"
+	"github.com/ethersphere/bee/v2/pkg/postage"
 	"github.com/ethersphere/bee/v2/pkg/soc"
+	storer "github.com/ethersphere/bee/v2/pkg/storer"
 	"github.com/ethersphere/bee/v2/pkg/swarm"
 )
 
@@ -20,11 +22,14 @@ type Topic [TopicLength]byte
 
 func (bl *Beelite) AddSOC(ctx context.Context,
 	batchHex string,
+	stampSig []byte,
+	act bool,
+	historyAddress swarm.Address,
 	reader io.Reader,
 	id []byte,
 	owner []byte,
 	sig []byte,
-) (reference swarm.Address, err error) {
+) (reference swarm.Address, newHistoryAddress swarm.Address, err error) {
 	reference = swarm.ZeroAddress
 	if batchHex == "" {
 		err = fmt.Errorf("batch is not set")
@@ -32,7 +37,7 @@ func (bl *Beelite) AddSOC(ctx context.Context,
 	}
 	batch, err := hex.DecodeString(batchHex)
 	if err != nil {
-		err = fmt.Errorf("invalid postage batch")
+		err = errInvalidPostageBatch
 		return
 	}
 	var (
@@ -48,12 +53,28 @@ func (bl *Beelite) AddSOC(ctx context.Context,
 			return
 		}
 	}
-	putter, err := bl.newStamperPutter(ctx, putterOptions{
-		BatchID:  batch,
-		TagID:    tag,
-		Pin:      pin,
-		Deferred: pin,
-	})
+	var putter storer.PutterSession
+	if len(stampSig) != 0 {
+		stamp := postage.Stamp{}
+		if err = stamp.UnmarshalBinary(stampSig); err != nil {
+			bl.logger.Error(err, "Stamp deserialization failure")
+			return
+		}
+
+		putter, err = bl.newStampedPutter(ctx, putterOptions{
+			BatchID:  stamp.BatchID(),
+			TagID:    tag,
+			Pin:      pin,
+			Deferred: pin,
+		}, &stamp)
+	} else {
+		putter, err = bl.newStamperPutter(ctx, putterOptions{
+			BatchID:  batch,
+			TagID:    tag,
+			Pin:      pin,
+			Deferred: pin,
+		})
+	}
 	if err != nil {
 		bl.logger.Error(err, "get putter failed")
 		return
@@ -98,7 +119,16 @@ func (bl *Beelite) AddSOC(ctx context.Context,
 
 	if !soc.Valid(sch) {
 		bl.logger.Error(nil, "invalid chunk", "error")
-		return swarm.ZeroAddress, nil
+		return swarm.ZeroAddress, swarm.ZeroAddress, nil
+	}
+
+	reference = sch.Address()
+	if act {
+		reference, newHistoryAddress, err = bl.actEncryptionHandler(ctx, putter, reference, historyAddress)
+		if err != nil {
+			bl.logger.Error(err, "access control upload failed")
+			return
+		}
 	}
 
 	err = putter.Put(ctx, sch)
@@ -114,6 +144,5 @@ func (bl *Beelite) AddSOC(ctx context.Context,
 		return
 	}
 
-	reference = sch.Address()
 	return
 }

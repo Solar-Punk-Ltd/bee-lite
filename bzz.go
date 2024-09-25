@@ -2,6 +2,7 @@ package beelite
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -28,10 +29,12 @@ func (bl *Beelite) AddFileBzz(parentContext context.Context,
 	batchHex,
 	filename,
 	contentType string,
+	act bool,
+	historyAddress swarm.Address,
 	encrypt bool,
 	rLevel redundancy.Level,
 	reader io.Reader,
-) (reference swarm.Address, err error) {
+) (reference swarm.Address, newHistoryAddress swarm.Address, err error) {
 	reference = swarm.ZeroAddress
 	if batchHex == "" {
 		err = fmt.Errorf("batch is not set")
@@ -39,7 +42,7 @@ func (bl *Beelite) AddFileBzz(parentContext context.Context,
 	}
 	batchID, err := hex.DecodeString(batchHex)
 	if err != nil {
-		err = fmt.Errorf("invalid postage batch")
+		err = errInvalidPostageBatch
 		return
 	}
 
@@ -113,32 +116,44 @@ func (bl *Beelite) AddFileBzz(parentContext context.Context,
 	}
 	bl.logger.Debug("bzz upload file:", "manifest reference", manifestReference.String())
 
+	reference = manifestReference
+	if act {
+		reference, newHistoryAddress, err = bl.actEncryptionHandler(parentContext, putter, reference, historyAddress)
+		if err != nil {
+			bl.logger.Error(err, "access control upload failed")
+			return
+		}
+	}
+
 	err = putter.Done(manifestReference)
 	if err != nil {
 		bl.logger.Error(err, "done split failed")
 		err = errors.Join(fmt.Errorf("(done split) upload failed 5: %w", err), putter.Cleanup())
 		return
 	}
-	reference = manifestReference
 
 	return
 }
 
-func (bl *Beelite) GetBzz(parentContext context.Context, address swarm.Address) (io.Reader, string, error) {
+func (bl *Beelite) GetBzz(parentContext context.Context, address swarm.Address, publisher *ecdsa.PublicKey, historyAddress *swarm.Address, timestamp *int64) (io.Reader, string, error) {
 	cache := true
 	ls := loadsave.NewReadonly(bl.storer.Download(cache))
 	feedDereferenced := false
 
 	ctx := parentContext
-
+	decryptedRef, err := bl.actDecryptionHandler(parentContext, address, publisher, historyAddress, timestamp, cache)
+	if err != nil {
+		bl.logger.Error(err, "act decryption failed")
+		return nil, "", err
+	}
 FETCH:
 	// read manifest entry
 	m, err := manifest.NewDefaultManifestReference(
-		address,
+		decryptedRef,
 		ls,
 	)
 	if err != nil {
-		bl.logger.Error(err, "bzz download: not manifest", "address", address)
+		bl.logger.Error(err, "bzz download: not manifest", "address", decryptedRef)
 		return nil, "", err
 	}
 
@@ -163,7 +178,7 @@ FETCH:
 				bl.logger.Error(err, "bzz download: mapStructure feed update failed")
 				return nil, "", err
 			}
-			address = ref
+			decryptedRef = ref
 			feedDereferenced = true
 			curBytes, err := cur.MarshalBinary()
 			if err != nil {

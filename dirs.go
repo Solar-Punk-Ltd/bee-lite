@@ -41,10 +41,12 @@ func (bl *Beelite) AddDirBzz(
 	contentType,
 	indexFilename,
 	errorFilename string,
+	act bool,
+	historyAddress swarm.Address,
 	encrypt bool,
 	rLevel redundancy.Level,
 	reader io.Reader,
-) (reference swarm.Address, err error) {
+) (reference swarm.Address, newHistoryAddress swarm.Address, err error) {
 	reference = swarm.ZeroAddress
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
@@ -70,7 +72,7 @@ func (bl *Beelite) AddDirBzz(
 	}
 	batchID, err := hex.DecodeString(batchHex)
 	if err != nil {
-		err = fmt.Errorf("invalid postage batch")
+		err = errInvalidPostageBatch
 		return
 	}
 
@@ -113,6 +115,15 @@ func (bl *Beelite) AddDirBzz(
 		return
 	}
 
+	encryptedReference := reference
+	if act {
+		reference, newHistoryAddress, err = bl.actEncryptionHandler(parentContext, putter, reference, historyAddress)
+		if err != nil {
+			bl.logger.Error(err, "access control upload failed")
+			return
+		}
+	}
+
 	err = putter.Done(reference)
 	if err != nil {
 		bl.logger.Error(err, "store dir failed")
@@ -120,6 +131,7 @@ func (bl *Beelite) AddDirBzz(
 		return
 	}
 
+	reference = encryptedReference
 	return
 }
 

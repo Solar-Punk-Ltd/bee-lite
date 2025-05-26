@@ -1,13 +1,13 @@
 module github.com/Solar-Punk-Ltd/bee-lite
 
-go 1.22
+go 1.23
 
-toolchain go1.22.4
+toolchain go1.23.0
 
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2
 	github.com/ethereum/go-ethereum v1.14.3
-	github.com/ethersphere/bee/v2 v2.2.0
+	github.com/ethersphere/bee/v2 v2.5.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/multiformats/go-multiaddr v0.12.3
 	github.com/prometheus/client_golang v1.18.0
@@ -38,9 +38,10 @@ require (
 	github.com/elastic/gosigar v0.14.2 // indirect
 	github.com/ethereum/c-kzg-4844 v1.0.0 // indirect
 	github.com/ethersphere/go-price-oracle-abi v0.2.0 // indirect
-	github.com/ethersphere/go-storage-incentives-abi v0.9.1 // indirect
+	github.com/ethersphere/go-storage-incentives-abi v0.9.2 // indirect
 	github.com/ethersphere/go-sw3-abi v0.6.5 // indirect
 	github.com/ethersphere/langos v1.0.0 // indirect
+	github.com/felixge/fgprof v0.9.5 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/francoispqt/gojay v1.2.13 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
@@ -56,7 +57,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb // indirect
 	github.com/google/gopacket v1.1.19 // indirect
-	github.com/google/pprof v0.0.0-20240207164012-fb44976bdcd5 // indirect
+	github.com/google/pprof v0.0.0-20240227163752-401108e1b7e7 // indirect
 	github.com/google/uuid v1.4.0 // indirect
 	github.com/gorilla/handlers v1.4.2 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect

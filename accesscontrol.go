@@ -23,7 +23,7 @@ func (bl *Beelite) actDecryptionHandler(ctx context.Context, reference swarm.Add
 		ts = *timestamp
 	}
 
-	ls := loadsave.NewReadonly(bl.storer.Download(cache))
+	ls := loadsave.NewReadonly(bl.storer.Download(cache), bl.storer.Cache(), redundancy.DefaultLevel)
 	decryptedRef, err := bl.accesscontrol.DownloadHandler(ctx, ls, reference, publisher, *historyAddress, ts)
 	if err != nil {
 		bl.logger.Error(err, "access control download failed")
@@ -40,7 +40,7 @@ func (bl *Beelite) actEncryptionHandler(
 	historyRootHash swarm.Address,
 ) (swarm.Address, swarm.Address, error) {
 	publisherPublicKey := bl.publicKey
-	ls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, false, redundancy.NONE))
+	ls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, false, redundancy.NONE), redundancy.NONE)
 	storageReference, historyReference, encryptedReference, err := bl.accesscontrol.UploadHandler(ctx, ls, reference, publisherPublicKey, historyRootHash)
 	if err != nil {
 		return swarm.ZeroAddress, swarm.ZeroAddress, err

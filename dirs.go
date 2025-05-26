@@ -149,7 +149,7 @@ func (bl *Beelite) storeDir(
 ) (swarm.Address, error) {
 	p := requestPipelineFn(putter, encrypt, rLevel)
 	factory := requestPipelineFactory(ctx, putter, encrypt, rLevel)
-	ls := loadsave.New(getter, putter, factory)
+	ls := loadsave.New(getter, putter, factory, rLevel)
 
 	dirManifest, err := manifest.NewDefaultManifest(ls, encrypt)
 	if err != nil {

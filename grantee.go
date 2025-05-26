@@ -15,7 +15,7 @@ import (
 
 func (bl *Beelite) GetGranteeList(ctx context.Context, encryptedglRef swarm.Address, cache bool) ([]string, error) {
 	publisher := bl.publicKey
-	ls := loadsave.NewReadonly(bl.storer.Download(cache))
+	ls := loadsave.NewReadonly(bl.storer.Download(cache), bl.storer.Cache(), redundancy.DefaultLevel)
 	grantees, err := bl.accesscontrol.Get(ctx, ls, publisher, encryptedglRef)
 	if err != nil {
 		bl.logger.Error(err, "could not get grantees")
@@ -80,8 +80,8 @@ func (bl *Beelite) AddRevokeGrantees(ctx context.Context, batchHex string, grant
 
 	granteeref := granteesAddress
 	publisher := bl.publicKey
-	ls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, false, redundancy.NONE))
-	gls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, true, redundancy.NONE))
+	ls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, false, redundancy.DefaultLevel), redundancy.DefaultLevel)
+	gls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, true, redundancy.DefaultLevel), redundancy.DefaultLevel)
 	granteeref, encryptedglref, historyref, actref, err := bl.accesscontrol.UpdateHandler(ctx, ls, gls, granteeref, historyAddress, publisher, parsedAddlist, parsedRevokelist)
 	if err != nil {
 		bl.logger.Error(err, "failed to update grantee list")
@@ -145,8 +145,8 @@ func (bl *Beelite) CreateGrantees(ctx context.Context, batchHex string, historyA
 	}
 
 	publisher := bl.publicKey
-	ls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, false, redundancy.NONE))
-	gls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, true, redundancy.NONE))
+	ls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, false, redundancy.DefaultLevel), redundancy.DefaultLevel)
+	gls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, true, redundancy.DefaultLevel), redundancy.DefaultLevel)
 	granteeref, encryptedglref, historyref, actref, err := bl.accesscontrol.UpdateHandler(ctx, ls, gls, swarm.ZeroAddress, historyAddress, publisher, list, nil)
 	if err != nil {
 		bl.logger.Error(nil, "failed to create grantee list")

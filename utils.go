@@ -160,12 +160,13 @@ var (
 	errInvalidPostageBatch         = errors.New("invalid postage batch id")
 )
 
-func (p *putterSessionWrapper) Cleanup() error {
-	return errors.Join(p.PutterSession.Cleanup(), p.save())
-}
-
 func (p *putterSessionWrapper) Put(ctx context.Context, chunk swarm.Chunk) error {
-	stamp, err := p.stamper.Stamp(chunk.Address())
+	idAddress, err := storage.IdentityAddress(chunk)
+	if err != nil {
+		return err
+	}
+
+	stamp, err := p.stamper.Stamp(chunk.Address(), idAddress)
 	if err != nil {
 		return err
 	}
@@ -173,11 +174,11 @@ func (p *putterSessionWrapper) Put(ctx context.Context, chunk swarm.Chunk) error
 }
 
 func (p *putterSessionWrapper) Done(ref swarm.Address) error {
-	err := p.PutterSession.Done(ref)
-	if err != nil {
-		return err
-	}
-	return p.save()
+	return errors.Join(p.PutterSession.Done(ref), p.save())
+}
+
+func (p *putterSessionWrapper) Cleanup() error {
+	return errors.Join(p.PutterSession.Cleanup(), p.save())
 }
 
 func (bl *Beelite) getStamper(batchID []byte) (postage.Stamper, func() error, error) {

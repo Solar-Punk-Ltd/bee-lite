@@ -25,6 +25,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/config"
 	"github.com/ethersphere/bee/v2/pkg/crypto"
 	"github.com/ethersphere/bee/v2/pkg/feeds/factory"
+	"github.com/ethersphere/bee/v2/pkg/gsoc"
 	"github.com/ethersphere/bee/v2/pkg/hive"
 	"github.com/ethersphere/bee/v2/pkg/log"
 	"github.com/ethersphere/bee/v2/pkg/metrics"
@@ -95,6 +96,7 @@ type Bee struct {
 	accountingCloser         io.Closer
 	pullSyncCloser           io.Closer
 	pssCloser                io.Closer
+	gsocCloser               io.Closer
 	ethClientCloser          func()
 	transactionMonitorCloser io.Closer
 	transactionCloser        io.Closer
@@ -113,10 +115,10 @@ type Bee struct {
 }
 
 const (
-	refreshRate                   = int64(4500000)            // accounting units refreshed per second
+	refreshRate                   = int64(4_500_000)            // accounting units refreshed per second
 	lightFactor                   = 10                        // downscale payment thresholds and their change rate, and refresh rates by this for light nodes
 	lightRefreshRate              = refreshRate / lightFactor // refresh rate used by / for light nodes
-	basePrice                     = 10000                     // minimal price for retrieval and pushsync requests of maximum proximity
+	basePrice                     = 10_000                     // minimal price for retrieval and pushsync requests of maximum proximity
 	postageSyncingStallingTimeout = 10 * time.Minute          //
 	postageSyncingBackoffTimeout  = 5 * time.Second           //
 	minPaymentThreshold           = 2 * refreshRate           // minimal accepted payment threshold of full nodes
@@ -131,34 +133,8 @@ const (
 	additionalConfirmations       = 2
 	reserveMinEvictCount          = 1_000
 	cacheMinEvictCount            = 10_000
+	maxAllowedDoubling            = 1
 )
-
-func initChequeStoreCashout(
-	stateStore storage.StateStorer,
-	swapBackend transaction.Backend,
-	chequebookFactory chequebook.Factory,
-	chainID int64,
-	overlayEthAddress common.Address,
-	transactionService transaction.Service,
-) (chequebook.ChequeStore, chequebook.CashoutService) {
-	chequeStore := chequebook.NewChequeStore(
-		stateStore,
-		chequebookFactory,
-		chainID,
-		overlayEthAddress,
-		transactionService,
-		chequebook.RecoverCheque,
-	)
-
-	cashout := chequebook.NewCashoutService(
-		stateStore,
-		swapBackend,
-		transactionService,
-		chequeStore,
-	)
-
-	return chequeStore, cashout
-}
 
 func NewBee(
 	ctx context.Context,
@@ -217,6 +193,17 @@ func NewBee(
 			}
 		}
 	}(b)
+
+	if !o.FullNodeMode && o.ReserveCapacityDoubling != 0 {
+		return nil, fmt.Errorf("reserve capacity doubling is only allowed for full nodes")
+	}
+
+	if o.ReserveCapacityDoubling < 0 || o.ReserveCapacityDoubling > maxAllowedDoubling {
+		return nil, fmt.Errorf("config reserve capacity doubling has to be between default: 0 and maximum: %d", maxAllowedDoubling)
+	}
+	var shallowReceiptTolerance = maxAllowedDoubling - o.ReserveCapacityDoubling
+
+	reserveCapacity := (1 << o.ReserveCapacityDoubling) * storer.DefaultReserveCapacity
 
 	stateStore, stateStoreMetrics, err := node.InitStateStore(logger, o.DataDir, o.StatestoreCacheCapacity)
 	if err != nil {
@@ -329,7 +316,7 @@ func NewBee(
 			func(id []byte) error {
 				return evictFn(id)
 			},
-			ReserveCapacity,
+			reserveCapacity,
 			logger,
 		)
 		if err != nil {
@@ -414,8 +401,11 @@ func NewBee(
 			o.CORSAllowedOrigins,
 			stamperStore,
 		)
-		apiService.MountTechnicalDebug()
+
+		apiService.Mount()
 		apiService.SetProbe(probe)
+
+		apiService.SetSwarmAddress(&swarmAddress)
 
 		apiServer := &http.Server{
 			IdleTimeout:       30 * time.Second,
@@ -682,7 +672,7 @@ func NewBee(
 		Batchstore:                batchStore,
 		StateStore:                stateStore,
 		RadiusSetter:              kad,
-		WarmupDuration:            o.WarmupTime,
+		WarmupDuration:            warmupTime,
 		Logger:                    logger,
 		Tracer:                    tracer,
 		CacheMinEvictCount:        cacheMinEvictCount,
@@ -691,10 +681,11 @@ func NewBee(
 
 	if o.FullNodeMode && !o.BootnodeMode {
 		// configure reserve only for full node
-		lo.ReserveCapacity = ReserveCapacity
+		lo.ReserveCapacity = reserveCapacity
 		lo.ReserveWakeUpDuration = reserveWakeUpDuration
 		lo.ReserveMinEvictCount = reserveMinEvictCount
 		lo.RadiusSetter = kad
+		lo.ReserveCapacityDoubling = o.ReserveCapacityDoubling
 	}
 
 	localStore, err := storer.New(ctx, path, lo)
@@ -858,7 +849,9 @@ func NewBee(
 	pricing.SetPaymentThresholdObserver(acc)
 
 	pssService := pss.New(pssPrivateKey, logger)
+	gsocService := gsoc.New(logger)
 	b.pssCloser = pssService
+	b.gsocCloser = gsocService
 
 	validStamp := postage.ValidStamp(batchStore)
 
@@ -911,7 +904,7 @@ func NewBee(
 		}
 	}
 
-	pushSyncProtocol := pushsync.New(swarmAddress, networkID, nonce, p2ps, localStore, waitNetworkRFunc, kad, o.FullNodeMode, pssService.TryUnwrap, validStamp, logger, acc, pricer, signer, tracer, warmupTime)
+	pushSyncProtocol := pushsync.New(swarmAddress, networkID, nonce, p2ps, localStore, waitNetworkRFunc, kad, o.FullNodeMode && !o.BootnodeMode, pssService.TryUnwrap, gsocService.Handle, validStamp, logger, acc, pricer, signer, tracer, warmupTime, uint8(shallowReceiptTolerance))
 	b.pushSyncCloser = pushSyncProtocol
 
 	// set the pushSyncer in the PSS
@@ -920,12 +913,12 @@ func NewBee(
 	retrieval := retrieval.New(swarmAddress, waitNetworkRFunc, localStore, p2ps, kad, logger, acc, pricer, tracer, o.RetrievalCaching)
 	localStore.SetRetrievalService(retrieval)
 
-	pusherService := pusher.New(networkID, localStore, pushSyncProtocol, validStamp, logger, warmupTime, pusher.DefaultRetryCount)
+	pusherService := pusher.New(networkID, localStore, pushSyncProtocol, batchStore, logger, warmupTime, pusher.DefaultRetryCount)
 	b.pusherCloser = pusherService
 
 	pusherService.AddFeed(localStore.PusherFeed())
 
-	pullSyncProtocol := pullsync.New(p2ps, localStore, pssService.TryUnwrap, validStamp, logger, pullsync.DefaultMaxPage)
+	pullSyncProtocol := pullsync.New(p2ps, localStore, pssService.TryUnwrap, gsocService.Handle, validStamp, logger, pullsync.DefaultMaxPage)
 	b.pullSyncCloser = pullSyncProtocol
 
 	retrieveProtocolSpec := retrieval.Protocol()
@@ -963,20 +956,40 @@ func NewBee(
 		stakingContractAddress = common.HexToAddress(o.StakingContractAddress)
 	}
 
-	stakingContract := staking.New(overlayEthAddress, stakingContractAddress, abiutil.MustParseABI(chainCfg.StakingABI), bzzTokenAddress, transactionService, common.BytesToHash(nonce), o.TrxDebugMode)
+	stakingContract := staking.New(overlayEthAddress, stakingContractAddress, abiutil.MustParseABI(chainCfg.StakingABI), bzzTokenAddress, transactionService, common.BytesToHash(nonce), o.TrxDebugMode, uint8(o.ReserveCapacityDoubling))
 
-	if chainEnabled && changedOverlay {
+	if chainEnabled {
+
 		stake, err := stakingContract.GetPotentialStake(ctx)
 		if err != nil {
-			return nil, errors.New("getting stake balance")
+			return nil, err
 		}
+
 		if stake.Cmp(big.NewInt(0)) > 0 {
-			logger.Debug("changing overlay address in staking contract")
-			tx, err := stakingContract.ChangeStakeOverlay(ctx, common.BytesToHash(nonce))
-			if err != nil {
-				return nil, fmt.Errorf("cannot change staking overlay address: %v", err.Error())
+
+			if changedOverlay {
+				logger.Debug("changing overlay address in staking contract")
+				tx, err := stakingContract.ChangeStakeOverlay(ctx, common.BytesToHash(nonce))
+				if err != nil {
+					return nil, fmt.Errorf("cannot change staking overlay address: %v", err.Error())
+				}
+				logger.Info("overlay address changed in staking contract", "transaction", tx)
 			}
-			logger.Info("overlay address changed in staking contract", "transaction", tx)
+
+			// make sure that the staking contract has the up to date height
+			tx, updated, err := stakingContract.UpdateHeight(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if updated {
+				logger.Info("updated new reserve capacity doubling height in the staking contract", "transaction", tx, "new_height", o.ReserveCapacityDoubling)
+			}
+
+			// Check if the staked amount is sufficient to cover the additional neighborhoods.
+			// The staked amount must be at least 2^h * MinimumStake.
+			if o.ReserveCapacityDoubling > 0 && stake.Cmp(big.NewInt(0).Mul(big.NewInt(1<<o.ReserveCapacityDoubling), staking.MinimumStakeAmount)) < 0 {
+				logger.Warning("staked amount does not sufficiently cover the additional reserve capacity. Stake should be at least 2^h * 10 BZZ, where h is the number extra doublings.")
+			}
 		}
 	}
 
@@ -1002,11 +1015,14 @@ func NewBee(
 				redistributionContractAddress = common.HexToAddress(o.RedistributionContractAddress)
 			}
 
+			redistributionContract := redistribution.New(swarmAddress, overlayEthAddress, logger, transactionService, redistributionContractAddress, abiutil.MustParseABI(chainCfg.RedistributionABI), o.TrxDebugMode)
+
+			startWarmupPeriod := time.Now()
 			isFullySynced := func() bool {
-				return localStore.ReserveSize() >= reserveTreshold && pullerService.SyncRate() == 0
+				reserveTreshold := reserveCapacity * 5 / 10
+				return localStore.ReserveSize() >= reserveTreshold && pullerService.SyncRate() == 0 && time.Now().After(startWarmupPeriod.Add(warmupTime))
 			}
 
-			redistributionContract := redistribution.New(swarmAddress, overlayEthAddress, logger, transactionService, redistributionContractAddress, abiutil.MustParseABI(chainCfg.RedistributionABI), o.TrxDebugMode)
 			agent, err = storageincentives.New(
 				swarmAddress,
 				overlayEthAddress,
@@ -1055,6 +1071,7 @@ func NewBee(
 		Storer:          localStore,
 		Resolver:        multiResolver,
 		Pss:             pssService,
+		Gsoc:            gsocService,
 		FeedFactory:     feedFactory,
 		Post:            post,
 		AccessControl:   accesscontrol,
@@ -1117,10 +1134,8 @@ func NewBee(
 			WsPingPeriod:       60 * time.Second,
 		}, extraOpts, chainID, erc20Service)
 
-		apiService.MountDebug()
-		apiService.MountAPI()
+		apiService.EnableFullAPI()
 
-		apiService.SetSwarmAddress(&swarmAddress)
 		apiService.SetRedistributionAgent(agent)
 	}
 
@@ -1211,10 +1226,14 @@ func (b *Bee) Shutdown() error {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(7)
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
 		tryClose(b.pssCloser, "pss")
+	}()
+	go func() {
+		defer wg.Done()
+		tryClose(b.gsocCloser, "gsoc")
 	}()
 	go func() {
 		defer wg.Done()
@@ -1294,4 +1313,31 @@ func isChainEnabled(o *node.Options, swapEndpoint string, logger log.Logger) boo
 
 	logger.Info("starting with an enabled chain backend")
 	return true // all other modes operate require chain enabled
+}
+
+func initChequeStoreCashout(
+	stateStore storage.StateStorer,
+	swapBackend transaction.Backend,
+	chequebookFactory chequebook.Factory,
+	chainID int64,
+	overlayEthAddress common.Address,
+	transactionService transaction.Service,
+) (chequebook.ChequeStore, chequebook.CashoutService) {
+	chequeStore := chequebook.NewChequeStore(
+		stateStore,
+		chequebookFactory,
+		chainID,
+		overlayEthAddress,
+		transactionService,
+		chequebook.RecoverCheque,
+	)
+
+	cashout := chequebook.NewCashoutService(
+		stateStore,
+		swapBackend,
+		transactionService,
+		chequeStore,
+	)
+
+	return chequeStore, cashout
 }

@@ -86,7 +86,7 @@ func (bl *Beelite) AddFeed(ctx context.Context,
 	}
 
 	factory := requestPipelineFactory(ctx, putter, encrypt, rLevel)
-	l := loadsave.New(bl.storer.ChunkStore(), bl.storer.Cache(), factory)
+	l := loadsave.New(bl.storer.ChunkStore(), bl.storer.Cache(), factory, redundancy.DefaultLevel)
 	feedManifest, err := manifest.NewDefaultManifest(l, encrypt)
 	if err != nil {
 		bl.logger.Debug("feed put: create manifest failed: %v", err)

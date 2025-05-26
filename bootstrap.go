@@ -24,6 +24,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/file"
 	"github.com/ethersphere/bee/v2/pkg/file/joiner"
 	"github.com/ethersphere/bee/v2/pkg/file/loadsave"
+	"github.com/ethersphere/bee/v2/pkg/file/redundancy"
 	"github.com/ethersphere/bee/v2/pkg/hive"
 	"github.com/ethersphere/bee/v2/pkg/log"
 	"github.com/ethersphere/bee/v2/pkg/manifest"
@@ -36,7 +37,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/settlement/pseudosettle"
 	"github.com/ethersphere/bee/v2/pkg/spinlock"
 	"github.com/ethersphere/bee/v2/pkg/storage"
-	storer "github.com/ethersphere/bee/v2/pkg/storer"
+	"github.com/ethersphere/bee/v2/pkg/storer"
 	"github.com/ethersphere/bee/v2/pkg/swarm"
 	"github.com/ethersphere/bee/v2/pkg/topology"
 	"github.com/ethersphere/bee/v2/pkg/topology/kademlia"
@@ -152,7 +153,7 @@ func bootstrapNode(
 	}
 	b.accountingCloser = acc
 
-	// bootstraper mode uses the light node refresh rate
+	// bootstrapper mode uses the light node refresh rate
 	enforcedRefreshRate := big.NewInt(lightRefreshRate)
 
 	pseudosettleService := pseudosettle.New(p2ps, logger, stateStore, acc, enforcedRefreshRate, enforcedRefreshRate, p2ps)
@@ -197,10 +198,10 @@ func bootstrapNode(
 	logger.Info("bootstrap: trying to fetch stamps snapshot")
 
 	var (
-		snapshotReference swarm.Address
-		reader            file.Joiner
-		l                 int64
-		eventsJSON        []byte
+		snapshotRootCh swarm.Chunk
+		reader         file.Joiner
+		l              int64
+		eventsJSON     []byte
 	)
 
 	for i := 0; i < getSnapshotRetries; i++ {
@@ -211,7 +212,7 @@ func bootstrapNode(
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
-		snapshotReference, err = getLatestSnapshot(ctx, localStore.Download(true), snapshotFeed)
+		snapshotRootCh, err = getLatestSnapshot(ctx, localStore.Download(true), localStore.Cache(), snapshotFeed)
 		if err != nil {
 			logger.Warning("bootstrap: fetching snapshot failed", "error", err)
 			continue
@@ -230,7 +231,7 @@ func bootstrapNode(
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
-		reader, l, err = joiner.New(ctx, localStore.Download(true), localStore.Cache(), snapshotReference)
+		reader, l, err = joiner.NewJoiner(ctx, localStore.Download(true), localStore.Cache(), snapshotRootCh.Address(), snapshotRootCh)
 		if err != nil {
 			logger.Warning("bootstrap: file joiner failed", "error", err)
 			continue
@@ -278,9 +279,10 @@ func waitPeers(kad *kademlia.Kad) error {
 func getLatestSnapshot(
 	ctx context.Context,
 	st storage.Getter,
+	putter storage.Putter,
 	address swarm.Address,
-) (swarm.Address, error) {
-	ls := loadsave.NewReadonly(st)
+) (swarm.Chunk, error) {
+	ls := loadsave.NewReadonly(st, putter, redundancy.DefaultLevel)
 	feedFactory := factory.New(st)
 
 	m, err := manifest.NewDefaultManifestReference(
@@ -288,12 +290,12 @@ func getLatestSnapshot(
 		ls,
 	)
 	if err != nil {
-		return swarm.ZeroAddress, fmt.Errorf("not a manifest: %w", err)
+		return nil, fmt.Errorf("not a manifest: %w", err)
 	}
 
 	e, err := m.Lookup(ctx, "/")
 	if err != nil {
-		return swarm.ZeroAddress, fmt.Errorf("node lookup: %w", err)
+		return nil, fmt.Errorf("node lookup: %w", err)
 	}
 
 	var (
@@ -304,42 +306,37 @@ func getLatestSnapshot(
 	if e := meta["swarm-feed-owner"]; e != "" {
 		owner, err = hex.DecodeString(e)
 		if err != nil {
-			return swarm.ZeroAddress, err
+			return nil, err
 		}
 	}
 	if e := meta["swarm-feed-topic"]; e != "" {
 		topic, err = hex.DecodeString(e)
 		if err != nil {
-			return swarm.ZeroAddress, err
+			return nil, err
 		}
 	}
 	if e := meta["swarm-feed-type"]; e != "" {
 		err := t.FromString(e)
 		if err != nil {
-			return swarm.ZeroAddress, err
+			return nil, err
 		}
 	}
 	if len(owner) == 0 || len(topic) == 0 {
-		return swarm.ZeroAddress, fmt.Errorf("node lookup: %s", "feed metadata absent")
+		return nil, fmt.Errorf("node lookup: %s", "feed metadata absent")
 	}
 	f := feeds.New(topic, common.BytesToAddress(owner))
 
 	l, err := feedFactory.NewLookup(*t, f)
 	if err != nil {
-		return swarm.ZeroAddress, fmt.Errorf("feed lookup failed: %w", err)
+		return nil, fmt.Errorf("feed lookup failed: %w", err)
 	}
 
 	u, _, _, err := l.At(ctx, time.Now().Unix(), 0)
 	if err != nil {
-		return swarm.ZeroAddress, err
+		return nil, err
 	}
 
-	_, ref, err := feeds.FromChunk(u)
-	if err != nil {
-		return swarm.ZeroAddress, err
-	}
-
-	return swarm.NewAddress(ref), nil
+	return feeds.GetWrappedChunk(ctx, st, u)
 }
 
 func batchStoreExists(s storage.StateStorer) (bool, error) {

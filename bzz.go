@@ -82,7 +82,7 @@ func (bl *Beelite) AddFileBzz(parentContext context.Context,
 	}
 
 	factory := requestPipelineFactory(parentContext, putter, encrypt, rLevel)
-	l := loadsave.New(bl.storer.ChunkStore(), bl.storer.Cache(), factory)
+	l := loadsave.New(bl.storer.ChunkStore(), bl.storer.Cache(), factory, rLevel)
 	m, err := manifest.NewDefaultManifest(l, encrypt)
 	if err != nil {
 		err = fmt.Errorf("(create manifest) upload failed 1: %w", err)
@@ -137,7 +137,7 @@ func (bl *Beelite) AddFileBzz(parentContext context.Context,
 
 func (bl *Beelite) GetBzz(parentContext context.Context, address swarm.Address, publisher *ecdsa.PublicKey, historyAddress *swarm.Address, timestamp *int64) (io.Reader, string, error) {
 	cache := true
-	ls := loadsave.NewReadonly(bl.storer.Download(cache))
+	ls := loadsave.NewReadonly(bl.storer.Download(cache),bl.storer.Cache(), redundancy.DefaultLevel)
 	feedDereferenced := false
 
 	ctx := parentContext
@@ -201,7 +201,7 @@ FETCH:
 			if ok {
 				fname = filepath.Base(fname) // only keep the file name
 			}
-			reader, _, err := joiner.New(ctx, bl.storer.Download(cache), bl.storer.Cache(), indexDocumentManifestEntry.Reference())
+			reader, _, err := joiner.New(ctx, bl.storer.Download(cache), bl.storer.Cache(), indexDocumentManifestEntry.Reference(), redundancy.DefaultLevel)
 			if err != nil {
 				if errors.Is(err, storage.ErrNotFound) {
 					return nil, "", fmt.Errorf("api download: not found : %w", err)

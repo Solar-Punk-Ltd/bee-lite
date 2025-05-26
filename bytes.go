@@ -91,7 +91,7 @@ func (bl *Beelite) GetBytes(parentContext context.Context, reference swarm.Addre
 		bl.logger.Error(err, "act decryption failed")
 		return nil, err
 	}
-	reader, _, err := joiner.New(parentContext, bl.storer.Download(cache), bl.storer.Cache(), decryptedRef)
+	reader, _, err := joiner.New(parentContext, bl.storer.Download(cache), bl.storer.Cache(), decryptedRef, redundancy.DefaultLevel)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, fmt.Errorf("api download: not found : %w", err)

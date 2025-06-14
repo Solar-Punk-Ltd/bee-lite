@@ -22,6 +22,7 @@ import (
 	storer "github.com/ethersphere/bee/v2/pkg/storer"
 	"github.com/ethersphere/bee/v2/pkg/swarm"
 	"github.com/ethersphere/bee/v2/pkg/topology"
+	"github.com/ethersphere/bee/v2/pkg/transaction"
 )
 
 const (
@@ -37,22 +38,23 @@ const (
 )
 
 type Beelite struct {
-	bee               *Bee
-	overlayEthAddress common.Address
-	publicKey         *ecdsa.PublicKey
-	feedFactory       feeds.Factory
-	storer            api.Storer
-	logger            beelog.Logger
-	topologyDriver    topology.Driver
-	ctx               context.Context
-	chequebookSvc     chequebook.Service
-	post              postage.Service
-	accesscontrol     accesscontrol.Controller
-	signer            crypto.Signer
-	postageContract   postagecontract.Interface
-	stamperStore      storage.Store
-	batchStore        postage.Storer
-	beeNodeMode       api.BeeNodeMode
+	bee                *Bee
+	overlayEthAddress  common.Address
+	publicKey          *ecdsa.PublicKey
+	feedFactory        feeds.Factory
+	storer             api.Storer
+	logger             beelog.Logger
+	topologyDriver     topology.Driver
+	ctx                context.Context
+	chequebookSvc      chequebook.Service
+	post               postage.Service
+	accesscontrol      accesscontrol.Controller
+	signer             crypto.Signer
+	postageContract    postagecontract.Interface
+	stamperStore       storage.Store
+	batchStore         postage.Storer
+	beeNodeMode        api.BeeNodeMode
+	transactionService transaction.Service
 }
 
 type putterOptions struct {

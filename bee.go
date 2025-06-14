@@ -115,10 +115,10 @@ type Bee struct {
 }
 
 const (
-	refreshRate                   = int64(4_500_000)            // accounting units refreshed per second
+	refreshRate                   = int64(4_500_000)          // accounting units refreshed per second
 	lightFactor                   = 10                        // downscale payment thresholds and their change rate, and refresh rates by this for light nodes
 	lightRefreshRate              = refreshRate / lightFactor // refresh rate used by / for light nodes
-	basePrice                     = 10_000                     // minimal price for retrieval and pushsync requests of maximum proximity
+	basePrice                     = 10_000                    // minimal price for retrieval and pushsync requests of maximum proximity
 	postageSyncingStallingTimeout = 10 * time.Minute          //
 	postageSyncingBackoffTimeout  = 5 * time.Second           //
 	minPaymentThreshold           = 2 * refreshRate           // minimal accepted payment threshold of full nodes
@@ -1148,22 +1148,23 @@ func NewBee(
 	}
 
 	bl = &Beelite{
-		bee:               b,
-		overlayEthAddress: overlayEthAddress,
-		publicKey:         publicKey,
-		feedFactory:       feedFactory,
-		logger:            logger,
-		storer:            localStore,
-		topologyDriver:    kad,
-		ctx:               ctx,
-		accesscontrol:     accesscontrol,
-		chequebookSvc:     chequebookService,
-		post:              post,
-		signer:            signer,
-		stamperStore:      stamperStore,
-		batchStore:        batchStore,
-		postageContract:   postageStampContractService,
-		beeNodeMode:       beeNodeMode,
+		bee:                b,
+		overlayEthAddress:  overlayEthAddress,
+		publicKey:          publicKey,
+		feedFactory:        feedFactory,
+		logger:             logger,
+		storer:             localStore,
+		topologyDriver:     kad,
+		ctx:                ctx,
+		accesscontrol:      accesscontrol,
+		chequebookSvc:      chequebookService,
+		post:               post,
+		signer:             signer,
+		stamperStore:       stamperStore,
+		batchStore:         batchStore,
+		postageContract:    postageStampContractService,
+		beeNodeMode:        beeNodeMode,
+		transactionService: transactionService,
 	}
 
 	return bl, nil

@@ -343,3 +343,7 @@ func (bl *Beelite) BeeNodeMode() api.BeeNodeMode {
 func (bl *Beelite) ConnectedPeerCount() int {
 	return bl.topologyDriver.Snapshot().Connected
 }
+
+func (bl *Beelite) TransactionService() transaction.Service {
+	return bl.transactionService
+}

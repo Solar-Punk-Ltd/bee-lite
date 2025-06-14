@@ -15,6 +15,8 @@ require (
 	golang.org/x/sync v0.7.0
 )
 
+replace github.com/ethersphere/bee/v2 => github.com/Solar-Punk-Ltd/bee/v2 v2.5.0-hack
+
 require (
 	contrib.go.opencensus.io/exporter/prometheus v0.4.2 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect

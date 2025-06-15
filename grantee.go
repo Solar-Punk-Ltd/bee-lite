@@ -138,11 +138,14 @@ func (bl *Beelite) CreateGrantees(ctx context.Context, batchHex string, historyA
 		return swarm.ZeroAddress, swarm.ZeroAddress, err
 	}
 
+	bl.logger.Info("bagoy", "before parseKeys")
 	list, err := parseKeys(granteeList)
 	if err != nil {
 		bl.logger.Error(nil, "create list key parse failed")
 		return swarm.ZeroAddress, swarm.ZeroAddress, err
 	}
+
+	bl.logger.Info("bagoy", "before update handler")
 
 	publisher := bl.publicKey
 	ls := loadsave.New(bl.storer.Download(true), bl.storer.Cache(), requestPipelineFactory(ctx, putter, false, redundancy.DefaultLevel), redundancy.DefaultLevel)
@@ -153,24 +156,28 @@ func (bl *Beelite) CreateGrantees(ctx context.Context, batchHex string, historyA
 		return swarm.ZeroAddress, swarm.ZeroAddress, err
 	}
 
+	fmt.Println("UpdateHandler before putter.Done(actref)")
 	err = putter.Done(actref)
 	if err != nil {
 		bl.logger.Error(nil, "done split act failed")
 		return swarm.ZeroAddress, swarm.ZeroAddress, err
 	}
 
+	fmt.Println("UpdateHandler before putter.Done(historyref)")
 	err = putter.Done(historyref)
 	if err != nil {
 		bl.logger.Error(nil, "done split history failed")
 		return swarm.ZeroAddress, swarm.ZeroAddress, err
 	}
 
+	fmt.Println("UpdateHandler before putter.Done(granteeref)")
 	err = putter.Done(granteeref)
 	if err != nil {
 		bl.logger.Error(nil, "done split grantees failed")
 		return swarm.ZeroAddress, swarm.ZeroAddress, err
 	}
 
+	fmt.Println("UpdateHandler finished")
 	return encryptedglref, historyref, nil
 }
 

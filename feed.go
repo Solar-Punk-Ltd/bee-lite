@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethersphere/bee/v2/pkg/feeds"
 	"github.com/ethersphere/bee/v2/pkg/file/loadsave"
 	"github.com/ethersphere/bee/v2/pkg/file/pipeline"
@@ -130,4 +132,117 @@ func (bl *Beelite) AddFeed(ctx context.Context,
 
 	reference = encryptedReference
 	return
+}
+
+func (bl *Beelite) FeedGetHandler(ctx context.Context, owner common.Address, topic []byte, at int64, after uint64) (swarm.Address, error) {
+	logger := bl.logger.WithName("get_feed").Build()
+
+	if at == 0 {
+		at = time.Now().Unix()
+	}
+
+	f := feeds.New(topic, owner)
+	lookup, err := bl.feedFactory.NewLookup(feeds.Sequence, f)
+	if err != nil {
+		logger.Error(err, "new lookup failed")
+		return swarm.ZeroAddress, err
+	}
+
+	ch, _, _, err := lookup.At(ctx, at, after)
+	if err != nil {
+		logger.Error(err, "lookup at failed", "at", at)
+		return swarm.ZeroAddress, err
+	}
+
+	// KLUDGE: if a feed was never updated, the chunk will be nil
+	if ch == nil {
+		logger.Error(nil, "no update found")
+		return swarm.ZeroAddress, nil
+	}
+
+	wc, err := feeds.GetWrappedChunk(ctx, bl.storer.Download(false), ch)
+	if err != nil {
+		logger.Error(nil, "wrapped chunk cannot be retrieved")
+		return swarm.ZeroAddress, nil
+	}
+
+	// curBytes, err := cur.MarshalBinary()
+	// if err != nil {
+	// 	logger.Debug("marshal current index failed", "error", err)
+	// 	logger.Error(nil, "marshal current index failed")
+	// 	return swarm.ZeroAddress, nil
+	// }
+
+	// nextBytes, err := next.MarshalBinary()
+	// if err != nil {
+	// 	logger.Debug("marshal next index failed", "error", err)
+	// 	logger.Error(nil, "marshal next index failed")
+	// 	return swarm.ZeroAddress, nil
+	// }
+
+	// socCh, err := soc.FromChunk(ch)
+	// if err != nil {
+	// 	logger.Error(nil, "wrapped chunk cannot be retrieved")
+	// 	return swarm.ZeroAddress, nil
+	// }
+	// sig := socCh.Signature()
+
+	// additionalHeaders := http.Header{
+	// 	ContentTypeHeader:          {"application/octet-stream"},
+	// 	SwarmFeedIndexHeader:       {hex.EncodeToString(curBytes)},
+	// 	SwarmFeedIndexNextHeader:   {hex.EncodeToString(nextBytes)},
+	// 	SwarmSocSignatureHeader:    {hex.EncodeToString(sig)},
+	// 	AccessControlExposeHeaders: {SwarmFeedIndexHeader, SwarmFeedIndexNextHeader, SwarmSocSignatureHeader},
+	// }
+
+	// bl.downloadHandler(ctx, logger, wc.Address(), wc)
+
+	return wc.Address(), nil
+}
+
+// // downloadHandler contains common logic for downloading Swarm file from API
+// func (bl *Beelite) downloadHandler(ctx context.Context, logger log.Logger, reference swarm.Address, rootCh swarm.Chunk) {
+// 	fallbackmode := false
+// 	defstrat := getter.DefaultStrategy
+// 	ctx, err := getter.SetConfigInContext(ctx, &defstrat, &fallbackmode, nil, logger)
+// 	if err != nil {
+// 		logger.Error(err, err.Error())
+// 		return
+// 	}
+// 	rLevel := redundancy.DefaultLevel
+
+// 	var (
+// 		reader file.Joiner
+// 		l      int64
+// 	)
+// 	if rootCh != nil {
+// 		reader, l, err = joiner.NewJoiner(ctx, bl.storer.Download(false), bl.storer.Cache(), reference, rootCh)
+// 	} else {
+// 		reader, l, err = joiner.New(ctx, bl.storer.Download(false), bl.storer.Cache(), reference, rLevel)
+// 	}
+// 	if err != nil {
+// 		logger.Error(err, "api download: error", "address", reference)
+// 		return
+// 	}
+
+// 	bufSize := lookaheadBufferSize(l)
+// 	if bufSize > 0 {
+// 		http.ServeContent(w, r, "", time.Now(), langos.NewBufferedLangos(reader, bufSize))
+// 		return
+// 	}
+// 	http.ServeContent(w, r, "", time.Now(), reader)
+// }
+
+const (
+	smallFileBufferSize = 8 * 32 * 1024
+	largeFileBufferSize = 16 * 32 * 1024
+
+	largeBufferFilesizeThreshold = 10 * 1000000 // ten megs
+)
+
+func lookaheadBufferSize(size int64) int {
+	if size <= largeBufferFilesizeThreshold {
+		return smallFileBufferSize
+	}
+	return largeFileBufferSize
 }

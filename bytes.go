@@ -86,11 +86,15 @@ func (bl *Beelite) AddBytes(parentContext context.Context,
 
 func (bl *Beelite) GetBytes(parentContext context.Context, reference swarm.Address, publisher *ecdsa.PublicKey, historyAddress *swarm.Address, timestamp *int64) (io.Reader, error) {
 	cache := true
+	bl.logger.Info("GetBytes", "reference", reference.String(), "historyAddress", historyAddress.String())
+
 	decryptedRef, err := bl.actDecryptionHandler(parentContext, reference, publisher, historyAddress, timestamp, cache)
 	if err != nil {
 		bl.logger.Error(err, "act decryption failed")
 		return nil, err
 	}
+	bl.logger.Info("GetBytes", "decryptedRef", decryptedRef.String())
+
 	reader, _, err := joiner.New(parentContext, bl.storer.Download(cache), bl.storer.Cache(), decryptedRef, redundancy.DefaultLevel)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {

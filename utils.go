@@ -347,3 +347,7 @@ func (bl *Beelite) ConnectedPeerCount() int {
 func (bl *Beelite) TransactionService() transaction.Service {
 	return bl.transactionService
 }
+
+func (bl *Beelite) PublicKey() *ecdsa.PublicKey {
+	return bl.publicKey
+}

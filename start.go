@@ -225,7 +225,6 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		RedistributionContractAddress: "",
 		StakingContractAddress:        "",
 		BlockTime:                     networkCfg.blockTime,
-		DeployGasPrice:                "",
 		WarmupTime:                    0,
 		ChainID:                       networkCfg.chainID,
 		RetrievalCaching:              lo.RetrievalCaching,

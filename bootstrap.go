@@ -36,6 +36,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/retrieval"
 	"github.com/ethersphere/bee/v2/pkg/settlement/pseudosettle"
 	"github.com/ethersphere/bee/v2/pkg/spinlock"
+	"github.com/ethersphere/bee/v2/pkg/stabilization"
 	"github.com/ethersphere/bee/v2/pkg/storage"
 	"github.com/ethersphere/bee/v2/pkg/storer"
 	"github.com/ethersphere/bee/v2/pkg/swarm"
@@ -73,9 +74,9 @@ func bootstrapNode(
 	networkID uint64,
 	logger log.Logger,
 	libp2pPrivateKey *ecdsa.PrivateKey,
+	detector *stabilization.Detector,
 	o *node.Options,
 ) (snapshot *postage.ChainSnapshot, retErr error) {
-
 	tracer, tracerCloser, err := tracing.NewTracer(&tracing.Options{
 		Enabled:     o.TracingEnabled,
 		Endpoint:    o.TracingEndpoint,
@@ -117,7 +118,7 @@ func bootstrapNode(
 	}
 	b.hiveCloser = hive
 
-	kad, err := kademlia.New(swarmAddress, addressbook, hive, p2ps, logger,
+	kad, err := kademlia.New(swarmAddress, addressbook, hive, p2ps, detector, logger,
 		kademlia.Options{Bootnodes: bootnodes, BootnodeMode: o.BootnodeMode, StaticNodes: o.StaticNodes, DataDir: o.DataDir})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create kademlia: %w", err)
@@ -340,7 +341,6 @@ func getLatestSnapshot(
 }
 
 func batchStoreExists(s storage.StateStorer) (bool, error) {
-
 	hasOne := false
 	err := s.Iterate("batchstore_", func(key, value []byte) (stop bool, err error) {
 		hasOne = true

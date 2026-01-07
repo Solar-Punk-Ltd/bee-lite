@@ -38,3 +38,23 @@ if err != nil {
     return err
 }
 ```
+
+## Compile with gomobile for android
+
+Target android api 21 is a nice sweet spot because it is Android Version: 5.0 (Lollipop) which is widely supported.
+
+First you need gomobile and bind
+
+```bash
+go install golang.org/x/mobile/cmd/gomobile@latest
+go get golang.org/x/mobile/bind
+```
+
+In the root of this project run
+`gomobile init`
+
+Run the following:
+
+`gomobile bind -target=android -androidapi=21 -o bee-lite.aar`
+
+The output can be used in [Android](https://dev.to/nikl/using-golang-gomobile-to-build-android-application-with-code-18jo) or in [React Native code (with Bridging)](https://medium.com/@ykanavalik/how-to-run-golang-code-in-your-react-native-android-application-using-expo-go-d4e46438b753)

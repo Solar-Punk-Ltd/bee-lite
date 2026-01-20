@@ -2,3 +2,7 @@ example/
 .idea
 vendor/
 .vscode
+
+*.aar
+*.jar
+.DS_Store

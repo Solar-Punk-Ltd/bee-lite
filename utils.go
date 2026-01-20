@@ -183,6 +183,14 @@ func (p *putterSessionWrapper) Cleanup() error {
 	return errors.Join(p.PutterSession.Cleanup(), p.save())
 }
 
+func (bl *Beelite) GetLogger() beelog.Logger {
+	return bl.logger
+}
+
+func (bl *Beelite) Shutdown() error {
+	return bl.bee.Shutdown()
+}
+
 func (bl *Beelite) getStamper(batchID []byte) (postage.Stamper, func() error, error) {
 	exists, err := bl.batchStore.Exists(batchID)
 	if err != nil {

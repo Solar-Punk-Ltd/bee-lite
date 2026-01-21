@@ -44,14 +44,14 @@ if err != nil {
 ### Requirements
 
 Go version 1.24.2
-Gomobile require JDK 1.8 or later - I recommend JDK 17 or later
+Gomobile require JDK 1.8 or later
 
 ### Installation
 
-1. Install golang. Recommended to use [goenv](https://github.com/go-nv/goenv) on Mac.
-2. Install JDK - version 17 will do it for not. Recommend to use some tool - I have used [SDKMAN](https://sdkman.io/) for it.
+1. Install golang. Recommend [goenv](https://github.com/go-nv/goenv).
+2. Install JDK - version 17. Recommend [SDKMAN](https://sdkman.io/).
 3. Install Android Studio for easy SDK/NDK management. Android 16 - Api 36 installed with NDK 29.0.14206865
-4. Here are some of my configured env vars maybe it helps you
+4. Example env var config:
 
    ```bash
    GOROOT=/Users/YOUR_USERNAME/.goenv/versions/1.24.2

@@ -39,6 +39,33 @@ if err != nil {
 }
 ```
 
+## Development for mobile using [gomobile](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)
+
+### Requirements
+
+Go version 1.24.2
+Gomobile require JDK 1.8 or later - I recommend JDK 17 or later
+
+### Installation
+
+1. Install golang. Recommended to use [goenv](https://github.com/go-nv/goenv) on Mac.
+2. Install JDK - version 17 will do it for not. Recommend to use some tool - I have used [SDKMAN](https://sdkman.io/) for it.
+3. Install Android Studio for easy SDK/NDK management. Android 16 - Api 36 installed with NDK 29.0.14206865
+4. Here are some of my configured env vars maybe it helps you
+
+   ```bash
+   GOROOT=/Users/YOUR_USERNAME/.goenv/versions/1.24.2
+   GOPATH=/Users/YOUR_USERNAME/go/1.24.2
+   ANDROID_HOME=/Users/YOUR_USERNAME/Library/Android/sdk
+   ANDROID_NDK_HOME=/Users/YOUR_USERNAME/Library/Android/sdk/ndk/29.0.14206865
+   SDKMAN_DIR=/Users/YOUR_USERNAME/.sdkman
+   SDKMAN_CANDIDATES_API=https://api.sdkman.io/2
+   SDKMAN_BROKER_API=https://broker.sdkman.io
+   SDKMAN_PLATFORM=darwinarm64
+   SDKMAN_CANDIDATES_DIR=/Users/YOUR_USERNAME/.sdkman/candidates
+   binary_input=/Users/YOUR_USERNAME/.sdkman/tmp/java-17.0.12-tem.bin
+   ```
+
 ## Development for Android platform
 
 Android has networking restrictions since API 30+ so to make [libp2p work](https://github.com/libp2p/go-libp2p/issues/1956) tweaks required on the Go repository that will be used to compile the code.

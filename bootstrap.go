@@ -98,12 +98,19 @@ func bootstrapNode(
 	}()
 
 	p2ps, err := libp2p.New(p2pCtx, signer, networkID, swarmAddress, addr, addressbook, stateStore, lightNodes, logger, tracer, libp2p.Options{
-		PrivateKey:     libp2pPrivateKey,
-		NATAddr:        o.NATAddr,
-		EnableWS:       o.EnableWS,
-		WelcomeMessage: o.WelcomeMessage,
-		FullNode:       false,
-		Nonce:          nonce,
+		PrivateKey:                  libp2pPrivateKey,
+		NATAddr:                     o.NATAddr,
+		NATWSSAddr:                  o.NATWSSAddr,
+		EnableWS:                    o.EnableWS,
+		EnableWSS:                   o.EnableWSS,
+		WSSAddr:                     o.WSSAddr,
+		AutoTLSStorageDir:           o.AutoTLSStorageDir,
+		AutoTLSDomain:               o.AutoTLSDomain,
+		AutoTLSRegistrationEndpoint: o.AutoTLSRegistrationEndpoint,
+		AutoTLSCAEndpoint:           o.AutoTLSCAEndpoint,
+		WelcomeMessage:              o.WelcomeMessage,
+		FullNode:                    false,
+		Nonce:                       nonce,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("p2p service: %w", err)
@@ -111,7 +118,7 @@ func bootstrapNode(
 	b.p2pService = p2ps
 	b.p2pHalter = p2ps
 
-	hive := hive.New(p2ps, addressbook, networkID, o.BootnodeMode, o.AllowPrivateCIDRs, logger)
+	hive := hive.New(p2ps, addressbook, networkID, o.BootnodeMode, o.AllowPrivateCIDRs, swarmAddress, logger)
 
 	if err = p2ps.AddProtocol(hive.Protocol()); err != nil {
 		return nil, fmt.Errorf("hive service: %w", err)
@@ -205,7 +212,7 @@ func bootstrapNode(
 		eventsJSON     []byte
 	)
 
-	for i := 0; i < getSnapshotRetries; i++ {
+	for range getSnapshotRetries {
 		if err != nil {
 			time.Sleep(retryWait)
 		}
@@ -224,7 +231,7 @@ func bootstrapNode(
 		return nil, err
 	}
 
-	for i := 0; i < getSnapshotRetries; i++ {
+	for range getSnapshotRetries {
 		if err != nil {
 			time.Sleep(retryWait)
 		}
@@ -337,7 +344,7 @@ func getLatestSnapshot(
 		return nil, err
 	}
 
-	return feeds.GetWrappedChunk(ctx, st, u)
+	return feeds.GetWrappedChunk(ctx, st, u, false)
 }
 
 func batchStoreExists(s storage.StateStorer) (bool, error) {

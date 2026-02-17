@@ -98,7 +98,6 @@ type Bee struct {
 	pullSyncCloser           io.Closer
 	pssCloser                io.Closer
 	gsocCloser               io.Closer
-	ethClientCloser          io.Closer
 	transactionMonitorCloser io.Closer
 	transactionCloser        io.Closer
 	listenerCloser           io.Closer
@@ -113,6 +112,8 @@ type Bee struct {
 	shutdownMutex            sync.Mutex
 	syncingStopped           *syncutil.Signaler
 	accesscontrolCloser      io.Closer
+
+	ethClientCloser func() // why not io.Closer?
 }
 
 const (
@@ -149,6 +150,13 @@ func NewBee(
 	session accesscontrol.Session,
 	o *node.Options,
 ) (bl *Beelite, err error) {
+
+	// start time for node warmup duration measurement
+	warmupStartTime := time.Now()
+	var pullSyncStartTime time.Time
+
+	nodeMetrics := newMetrics()
+
 	tracer, tracerCloser, err := tracing.NewTracer(&tracing.Options{
 		Enabled:     o.TracingEnabled,
 		Endpoint:    o.TracingEndpoint,
@@ -294,16 +302,10 @@ func NewBee(
 	}
 
 	var (
-		chainBackend       transaction.Backend
-		overlayEthAddress  common.Address
-		chainID            int64
-		transactionService transaction.Service
-		transactionMonitor transaction.Monitor
-		chequebookFactory  chequebook.Factory
-		chequebookService  chequebook.Service = new(noOpChequebookService)
-		chequeStore        chequebook.ChequeStore
-		cashoutService     chequebook.CashoutService
-		erc20Service       erc20.Service
+		chequebookService chequebook.Service = new(noOpChequebookService)
+		chequeStore       chequebook.ChequeStore
+		cashoutService    chequebook.CashoutService
+		erc20Service      erc20.Service
 	)
 
 	chainEnabled := isChainEnabled(o, o.BlockchainRpcEndpoint, logger)
@@ -325,7 +327,7 @@ func NewBee(
 		}
 	}
 
-	chainBackend, overlayEthAddress, chainID, transactionMonitor, transactionService, err = node.InitChain(
+	chainBackend, overlayEthAddress, chainID, transactionMonitor, transactionService, err := node.InitChain(
 		ctx,
 		logger,
 		stateStore,
@@ -333,18 +335,16 @@ func NewBee(
 		o.ChainID,
 		signer,
 		o.BlockTime,
-		chainEnabled)
+		chainEnabled,
+		o.MinimumGasTipCap,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("init chain: %w", err)
 	}
-	b.ethClientCloser = chainBackend
 
-	logger.Info("using chain with network network", "chain_id", chainID, "network_id", networkID)
+	logger.Info("using chain with network", "chain_id", chainID, "network_id", networkID)
 
-	if o.ChainID != -1 && o.ChainID != chainID {
-		return nil, fmt.Errorf("connected to wrong blockchain network; network chainID %d; configured chainID %d", chainID, o.ChainID)
-	}
-
+	b.ethClientCloser = chainBackend.Close
 	b.transactionCloser = tracerCloser
 	b.transactionMonitorCloser = transactionMonitor
 
@@ -382,7 +382,7 @@ func NewBee(
 			runtime.SetBlockProfileRate(1)
 		}
 
-		apiListener, err := net.Listen("tcp", o.APIAddr)
+		apiListener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", o.APIAddr)
 		if err != nil {
 			return nil, fmt.Errorf("api listener: %w", err)
 		}
@@ -428,22 +428,24 @@ func NewBee(
 		b.apiCloser = apiServer
 	}
 
-	// Sync the with the given Ethereum backend:
-	isSynced, _, err := transaction.IsSynced(ctx, chainBackend, maxDelay)
-	if err != nil {
-		return nil, fmt.Errorf("is synced: %w", err)
-	}
-	if !isSynced {
-		logger.Info("waiting to sync with the blockchain backend")
-
-		err := transaction.WaitSynced(ctx, logger, chainBackend, maxDelay)
+	if chainEnabled {
+		// Sync the with the given Ethereum backend:
+		isSynced, _, err := transaction.IsSynced(ctx, chainBackend, maxDelay)
 		if err != nil {
-			return nil, fmt.Errorf("waiting backend sync: %w", err)
+			return nil, fmt.Errorf("is synced: %w", err)
+		}
+		if !isSynced {
+			logger.Info("waiting to sync with the blockchain backend")
+
+			err := transaction.WaitSynced(ctx, logger, chainBackend, maxDelay)
+			if err != nil {
+				return nil, fmt.Errorf("waiting backend sync: %w", err)
+			}
 		}
 	}
 
 	if o.SwapEnable {
-		chequebookFactory, err = node.InitChequebookFactory(logger, chainBackend, chainID, transactionService, o.SwapFactoryAddress)
+		chequebookFactory, err := node.InitChequebookFactory(logger, chainBackend, chainID, transactionService, o.SwapFactoryAddress)
 		if err != nil {
 			return nil, fmt.Errorf("init chequebook factory: %w", err)
 		}
@@ -538,9 +540,17 @@ func NewBee(
 		logger.Info("node warmup check initiated. monitoring activity rate to determine readiness.", "startTime", t)
 	}
 
-	detector.OnStabilized = func(t time.Time, totalCount int) {
-		logger.Info("node warmup complete. system is considered stable and ready.", "stabilizationTime", t, "totalMonitoredEvents", totalCount)
+	warmupMeasurement := func(t time.Time, totalCount int) {
+		warmupDuration := t.Sub(warmupStartTime).Seconds()
+		logger.Info("node warmup complete. system is considered stable and ready.",
+			"stabilizationTime", t,
+			"totalMonitoredEvents", totalCount,
+			"warmupDurationSeconds", warmupDuration)
+
+		nodeMetrics.WarmupDuration.Observe(warmupDuration)
+		pullSyncStartTime = t
 	}
+	detector.OnStabilized = warmupMeasurement
 
 	detector.OnPeriodComplete = func(t time.Time, periodCount int, stDev float64) {
 		logger.Debug("node warmup check: period complete.", "periodEndTime", t, "eventsInPeriod", periodCount, "rateStdDev", stDev)
@@ -581,14 +591,21 @@ func NewBee(
 	}
 
 	p2ps, err := libp2p.New(ctx, signer, networkID, swarmAddress, addr, addressbook, stateStore, lightNodes, logger, tracer, libp2p.Options{
-		PrivateKey:      libp2pPrivateKey,
-		NATAddr:         o.NATAddr,
-		EnableWS:        o.EnableWS,
-		WelcomeMessage:  o.WelcomeMessage,
-		FullNode:        o.FullNodeMode,
-		Nonce:           nonce,
-		ValidateOverlay: chainEnabled,
-		Registry:        registry,
+		PrivateKey:                  libp2pPrivateKey,
+		NATAddr:                     o.NATAddr,
+		NATWSSAddr:                  o.NATWSSAddr,
+		EnableWS:                    o.EnableWS,
+		EnableWSS:                   o.EnableWSS,
+		WSSAddr:                     o.WSSAddr,
+		AutoTLSStorageDir:           o.AutoTLSStorageDir,
+		AutoTLSDomain:               o.AutoTLSDomain,
+		AutoTLSRegistrationEndpoint: o.AutoTLSRegistrationEndpoint,
+		AutoTLSCAEndpoint:           o.AutoTLSCAEndpoint,
+		WelcomeMessage:              o.WelcomeMessage,
+		FullNode:                    o.FullNodeMode,
+		Nonce:                       nonce,
+		ValidateOverlay:             chainEnabled,
+		Registry:                    registry,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("p2p service: %w", err)
@@ -661,7 +678,7 @@ func NewBee(
 		return nil, fmt.Errorf("pingpong service: %w", err)
 	}
 
-	hive := hive.New(p2ps, addressbook, networkID, o.BootnodeMode, o.AllowPrivateCIDRs, logger)
+	hive := hive.New(p2ps, addressbook, networkID, o.BootnodeMode, o.AllowPrivateCIDRs, swarmAddress, logger)
 
 	if err = p2ps.AddProtocol(hive.Protocol()); err != nil {
 		return nil, fmt.Errorf("hive service: %w", err)
@@ -746,8 +763,8 @@ func NewBee(
 		}
 	)
 
-	if !o.SkipPostageSnapshot && !batchStoreExists && (networkID == mainnetNetworkID) {
-		chainBackend := node.NewSnapshotLogFilterer(logger, archiveSnapshotGetter{})
+	if !o.SkipPostageSnapshot && !batchStoreExists && (networkID == mainnetNetworkID) && beeNodeMode != api.UltraLightMode {
+		chainBackend := NewSnapshotLogFilterer(logger, archiveSnapshotGetter{})
 
 		snapshotEventListener := listener.New(b.syncingStopped, logger, chainBackend, postageStampContractAddress, postageStampContractABI, o.BlockTime, postageSyncingStallingTimeout, postageSyncingBackoffTimeout)
 
@@ -761,10 +778,7 @@ func NewBee(
 				syncErr.Store(err)
 				logger.Error(err, "failed to start batch service from snapshot, continuing outside snapshot block...")
 			} else {
-				postageSyncStart, err = chainBackend.BlockNumber(ctx)
-				if err != nil {
-					logger.Error(err, "failed to initialize batch service from snapshot: failed to get block number...")
-				}
+				postageSyncStart = chainBackend.maxBlockHeight
 			}
 		}
 		if errClose := snapshotEventListener.Close(); errClose != nil {
@@ -921,7 +935,7 @@ func NewBee(
 		return nil, fmt.Errorf("status service: %w", err)
 	}
 
-	saludService := salud.New(nodeStatus, kad, localStore, logger, detector, api.FullMode.String(), salud.DefaultMinPeersPerBin, salud.DefaultDurPercentile, salud.DefaultConnsPercentile)
+	saludService := salud.New(nodeStatus, kad, localStore, logger, detector, api.FullMode.String(), salud.DefaultDurPercentile, salud.DefaultConnsPercentile)
 	b.saludCloser = saludService
 
 	rC, unsub := saludService.SubscribeNetworkStorageRadius()
@@ -1076,6 +1090,37 @@ func NewBee(
 		localStore.StartReserveWorker(ctx, pullerService, waitNetworkRFunc)
 		nodeStatus.SetSync(pullerService)
 
+		// measure full sync duration
+		detector.OnStabilized = func(t time.Time, totalCount int) {
+			warmupMeasurement(t, totalCount)
+
+			reserveThreshold := reserveCapacity >> 1
+			isFullySynced := func() bool {
+				return pullerService.SyncRate() == 0 && saludService.IsHealthy() && localStore.ReserveSize() >= reserveThreshold
+			}
+
+			syncCheckTicker := time.NewTicker(2 * time.Second)
+			go func() {
+				defer syncCheckTicker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-syncCheckTicker.C:
+						synced := isFullySynced()
+						logger.Debug("sync status check", "synced", synced, "reserveSize", localStore.ReserveSize(), "syncRate", pullerService.SyncRate())
+						if synced {
+							fullSyncTime := pullSyncStartTime.Sub(t)
+							logger.Info("full sync done", "duration", fullSyncTime)
+							nodeMetrics.FullSyncDuration.Observe(fullSyncTime.Minutes())
+							syncCheckTicker.Stop()
+							return
+						}
+					}
+				}
+			}()
+		}
+
 		if o.EnableStorageIncentives {
 
 			redistributionContractAddress := chainCfg.RedistributionAddress
@@ -1089,9 +1134,9 @@ func NewBee(
 			redistributionContract := redistribution.New(swarmAddress, overlayEthAddress, logger, transactionService, redistributionContractAddress, abiutil.MustParseABI(chainCfg.RedistributionABI), o.TrxDebugMode)
 
 			isFullySynced := func() bool {
-				reserveTreshold := reserveCapacity * 5 / 10
+				reserveThreshold := reserveCapacity * 5 / 10
 				logger.Debug("Sync status check evaluated", "stabilized", detector.IsStabilized())
-				return localStore.ReserveSize() >= reserveTreshold && pullerService.SyncRate() == 0 && detector.IsStabilized()
+				return localStore.ReserveSize() >= reserveThreshold && pullerService.SyncRate() == 0 && detector.IsStabilized()
 			}
 
 			agent, err = storageincentives.New(
@@ -1163,6 +1208,7 @@ func NewBee(
 		apiService.MustRegisterMetrics(kad.Metrics()...)
 		apiService.MustRegisterMetrics(saludService.Metrics()...)
 		apiService.MustRegisterMetrics(stateStoreMetrics.Metrics()...)
+		apiService.MustRegisterMetrics(getMetrics(nodeMetrics)...)
 
 		if pullerService != nil {
 			apiService.MustRegisterMetrics(pullerService.Metrics()...)
@@ -1221,25 +1267,25 @@ func NewBee(
 		return nil, fmt.Errorf("p2ps ready: %w", err)
 	}
 
-		bl = &Beelite{
-			bee:                b,
-			overlayEthAddress:  overlayEthAddress,
-			publicKey:          publicKey,
-			feedFactory:        feedFactory,
-			logger:             logger,
-			storer:             localStore,
-			topologyDriver:     kad,
-			ctx:                ctx,
-			accesscontrol:      accesscontrol,
-			chequebookSvc:      chequebookService,
-			post:               post,
-			signer:             signer,
-			stamperStore:       stamperStore,
-			batchStore:         batchStore,
-			postageContract:    postageStampContractService,
-			beeNodeMode:        beeNodeMode,
-			transactionService: transactionService,
-		}
+	bl = &Beelite{
+		bee:                b,
+		overlayEthAddress:  overlayEthAddress,
+		publicKey:          publicKey,
+		feedFactory:        feedFactory,
+		logger:             logger,
+		storer:             localStore,
+		topologyDriver:     kad,
+		ctx:                ctx,
+		accesscontrol:      accesscontrol,
+		chequebookSvc:      chequebookService,
+		post:               post,
+		signer:             signer,
+		stamperStore:       stamperStore,
+		batchStore:         batchStore,
+		postageContract:    postageStampContractService,
+		beeNodeMode:        beeNodeMode,
+		transactionService: transactionService,
+	}
 
 	return bl, nil
 }
@@ -1286,6 +1332,8 @@ func (b *Bee) Shutdown() error {
 		if err := c.Close(); err != nil {
 			mErr = multierror.Append(mErr, fmt.Errorf("%s: %w", errMsg, err))
 		}
+
+		c = nil
 	}
 
 	tryClose(b.apiCloser, "api")
@@ -1350,7 +1398,10 @@ func (b *Bee) Shutdown() error {
 
 	wg.Wait()
 
-	tryClose(b.ethClientCloser, "eth client")
+	if b.ethClientCloser != nil {
+		b.ethClientCloser()
+	}
+
 	tryClose(b.accesscontrolCloser, "accesscontrol")
 	tryClose(b.tracerCloser, "tracer")
 	tryClose(b.topologyCloser, "topology driver")

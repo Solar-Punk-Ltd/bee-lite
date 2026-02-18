@@ -25,6 +25,8 @@ import (
 
 var errInvalidFeedUpdate = errors.New("invalid feed update")
 
+var ErrFailedToGetBzzReference = errors.New("failed to get bzz reference")
+
 func (bl *Beelite) AddFileBzz(parentContext context.Context,
 	batchHex,
 	filename,
@@ -137,7 +139,7 @@ func (bl *Beelite) AddFileBzz(parentContext context.Context,
 
 func (bl *Beelite) GetBzz(parentContext context.Context, address swarm.Address, publisher *ecdsa.PublicKey, historyAddress *swarm.Address, timestamp *int64) (io.Reader, string, error) {
 	cache := true
-	ls := loadsave.NewReadonly(bl.storer.Download(cache),bl.storer.Cache(), redundancy.DefaultLevel)
+	ls := loadsave.NewReadonly(bl.storer.Download(cache), bl.storer.Cache(), redundancy.DefaultLevel)
 	feedDereferenced := false
 
 	ctx := parentContext
@@ -212,7 +214,7 @@ FETCH:
 		}
 	}
 
-	return nil, "", fmt.Errorf("failed to get bzz reference")
+	return nil, "", ErrFailedToGetBzzReference
 }
 
 func (bl *Beelite) manifestFeed(

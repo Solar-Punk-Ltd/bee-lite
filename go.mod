@@ -12,11 +12,14 @@ require (
 	github.com/ethersphere/batch-archive v0.0.5
 	github.com/ethersphere/bee/v2 v2.7.0
 	github.com/hashicorp/go-multierror v1.1.1
+	github.com/libp2p/go-libp2p v0.46.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/prometheus/client_golang v1.22.0
 	golang.org/x/crypto v0.46.0
 	golang.org/x/sync v0.19.0
 )
+
+replace github.com/ethersphere/bee/v2 => ../../nandibaa/bee
 
 require (
 	contrib.go.opencensus.io/exporter/prometheus v0.4.2 // indirect
@@ -76,7 +79,6 @@ require (
 	github.com/libdns/libdns v0.2.2 // indirect
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/libp2p/go-flow-metrics v0.2.0 // indirect
-	github.com/libp2p/go-libp2p v0.46.0 // indirect
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
 	github.com/libp2p/go-msgio v0.3.0 // indirect
 	github.com/libp2p/go-netroute v0.3.0 // indirect

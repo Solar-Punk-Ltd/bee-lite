@@ -15,6 +15,7 @@ import (
 	"github.com/ethersphere/bee/v2/pkg/crypto"
 	"github.com/ethersphere/bee/v2/pkg/feeds"
 	beelog "github.com/ethersphere/bee/v2/pkg/log"
+	"github.com/ethersphere/bee/v2/pkg/p2p"
 	"github.com/ethersphere/bee/v2/pkg/postage"
 	"github.com/ethersphere/bee/v2/pkg/postage/postagecontract"
 	"github.com/ethersphere/bee/v2/pkg/settlement/swap/chequebook"
@@ -55,6 +56,7 @@ type Beelite struct {
 	batchStore         postage.Storer
 	beeNodeMode        api.BeeNodeMode
 	transactionService transaction.Service
+	p2pBandwidth       p2p.NetworkStatistics
 }
 
 type putterOptions struct {

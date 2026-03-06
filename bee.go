@@ -116,6 +116,13 @@ type Bee struct {
 	ethClientCloser func() // why not io.Closer?
 }
 
+type ReadableBandwidthStats struct {
+	TotalInMB   string
+	TotalOutMB  string
+	RateInMBps  string
+	RateOutMBps string
+}
+
 const (
 	refreshRate                   = int64(4_500_000)          // accounting units refreshed per second
 	lightFactor                   = 10                        // downscale payment thresholds and their change rate, and refresh rates by this for light nodes
@@ -136,6 +143,10 @@ const (
 	reserveMinEvictCount          = 1_000
 	cacheMinEvictCount            = 10_000
 	maxAllowedDoubling            = 1
+
+	Byte = 1
+	KB   = 1024 * Byte
+	MB   = 1024 * KB
 )
 
 func NewBee(
@@ -1285,9 +1296,34 @@ func NewBee(
 		postageContract:    postageStampContractService,
 		beeNodeMode:        beeNodeMode,
 		transactionService: transactionService,
+		p2pBandwidth:       p2ps,
 	}
 
 	return bl, nil
+}
+
+func (bl *Beelite) GetBandwidthStats() *ReadableBandwidthStats {
+	s := bl.p2pBandwidth.GetBandwidthStats()
+
+	stats := &ReadableBandwidthStats{
+		TotalInMB:   fmt.Sprintf("%.2f MB", float64(s.TotalIn)/MB),
+		TotalOutMB:  fmt.Sprintf("%.2f MB", float64(s.TotalOut)/MB),
+		RateInMBps:  fmt.Sprintf("%.2f MB/s", s.RateIn/MB),
+		RateOutMBps: fmt.Sprintf("%.2f MB/s", s.RateOut/MB),
+	}
+
+	bl.logger.Info("BandwidthStats",
+		"TotalIn", stats.TotalInMB,
+		"TotalOut", stats.TotalOutMB,
+		"RateIn", stats.RateInMBps,
+		"RateOut", stats.RateOutMBps,
+	)
+
+	return stats
+}
+
+func (bl *Beelite) ClearBandwidthStats() {
+	bl.p2pBandwidth.ClearBandwidthStats()
 }
 
 func (b *Bee) SyncingStopped() chan struct{} {

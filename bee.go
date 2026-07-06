@@ -107,7 +107,7 @@ type Bee struct {
 	saludCloser              io.Closer
 	storageIncetivesCloser   io.Closer
 	pushSyncCloser           io.Closer
-	retrievalCloser          io.Closer
+	stabilizationDetector    io.Closer
 	shutdownInProgress       bool
 	shutdownMutex            sync.Mutex
 	syncingStopped           *syncutil.Signaler
@@ -310,6 +310,10 @@ func NewBee(
 
 	chainEnabled := isChainEnabled(o, o.BlockchainRpcEndpoint, logger)
 
+	if o.ChequebookVerification && (!o.FullNodeMode || !o.ChequebookEnable || !chainEnabled) {
+		return nil, fmt.Errorf("chequebook-verification requires full-node mode, chequebook-enable, and an enabled chain backend (full_node=%t, chequebook_enable=%t, chain_enabled=%t)", o.FullNodeMode, o.ChequebookEnable, chainEnabled)
+	}
+
 	var batchStore postage.Storer = new(postage.NoOpBatchStore)
 	var evictFn func([]byte) error
 
@@ -331,12 +335,19 @@ func NewBee(
 		ctx,
 		logger,
 		stateStore,
-		o.BlockchainRpcEndpoint,
 		o.ChainID,
 		signer,
 		o.BlockTime,
 		chainEnabled,
 		o.MinimumGasTipCap,
+		o.GasLimitFallback,
+		node.BlockchainRPCConfig{
+			Endpoint:    o.BlockchainRpcEndpoint,
+			DialTimeout: o.BlockchainRpcDialTimeout,
+			TLSTimeout:  o.BlockchainRpcTLSTimeout,
+			IdleTimeout: o.BlockchainRpcIdleTimeout,
+			Keepalive:   o.BlockchainRpcKeepalive,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("init chain: %w", err)
@@ -366,7 +377,7 @@ func NewBee(
 		}
 	}(probe)
 
-	stamperStore, err := node.InitStamperStore(logger, o.DataDir, stateStore)
+	stamperStore, wasClean, err := node.InitStamperStore(logger, o.DataDir, stateStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize stamper store: %w", err)
 	}
@@ -534,7 +545,7 @@ func NewBee(
 	if err != nil {
 		return nil, fmt.Errorf("rate stabilizer configuration failed: %w", err)
 	}
-	defer detector.Close()
+	b.stabilizationDetector = detector
 
 	detector.OnMonitoringStart = func(t time.Time) {
 		logger.Info("node warmup check initiated. monitoring activity rate to determine readiness.", "startTime", t)
@@ -556,41 +567,34 @@ func NewBee(
 		logger.Debug("node warmup check: period complete.", "periodEndTime", t, "eventsInPeriod", periodCount, "rateStdDev", stDev)
 	}
 
-	var initBatchState *postage.ChainSnapshot
-	// Bootstrap node with postage snapshot only if it is running on mainnet, is a fresh
-	// install or explicitly asked by user to resync
-	if networkID == mainnetNetworkID && o.UsePostageSnapshot && (!batchStoreExists || o.Resync) {
-		start := time.Now()
-		logger.Info("cold postage start detected. fetching postage stamp snapshot from swarm")
-		initBatchState, err = bootstrapNode(
-			ctx,
-			addr,
-			swarmAddress,
-			nonce,
-			addressbook,
-			bootnodes,
-			lightNodes,
-			stateStore,
-			signer,
-			networkID,
-			log.Noop,
-			libp2pPrivateKey,
-			detector,
-			o,
-		)
-		logger.Info("bootstrapper created", "elapsed", time.Since(start))
-		if err != nil {
-			logger.Error(err, "bootstrapper failed to fetch batch state")
-		}
-	}
-
 	var registry *prometheus.Registry
 
 	if apiService != nil {
 		registry = apiService.MetricsRegistry()
 	}
 
-	p2ps, err := libp2p.New(ctx, signer, networkID, swarmAddress, addr, addressbook, stateStore, lightNodes, logger, tracer, libp2p.Options{
+	chainCfg, found := config.GetByChainID(chainID)
+
+	var (
+		cbVerifier chequebook.Verifier
+		cbRegistry *chequebook.Registry
+	)
+	if o.ChequebookVerification {
+		minBalance, ok := new(big.Int).SetString(o.ChequebookMinBalance, 10)
+		if !ok {
+			return nil, fmt.Errorf("chequebook min balance %q cannot be parsed as base-10 integer", o.ChequebookMinBalance)
+		}
+		cbRegistry = chequebook.NewRegistry()
+		cbVerifier, err = chequebook.NewVerifier(transactionService, chainBackend, cbRegistry, chequebook.VerifierConfig{
+			AcceptedBytecodeHashes: chainCfg.AcceptedChequebookBytecodeHashes,
+			MinBalance:             minBalance,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("new chequebook verifier: %w", err)
+		}
+	}
+
+	libp2pOpts := libp2p.Options{
 		PrivateKey:                  libp2pPrivateKey,
 		NATAddr:                     o.NATAddr,
 		NATWSSAddr:                  o.NATWSSAddr,
@@ -604,9 +608,14 @@ func NewBee(
 		WelcomeMessage:              o.WelcomeMessage,
 		FullNode:                    o.FullNodeMode,
 		Nonce:                       nonce,
-		ValidateOverlay:             chainEnabled,
+		AllowPrivateCIDRs:           o.AllowPrivateCIDRs,
 		Registry:                    registry,
-	})
+		ChequebookVerifier:          cbVerifier,
+	}
+	if cbRegistry != nil {
+		libp2pOpts.ChequebookStorer = cbRegistry
+	}
+	p2ps, err := libp2p.New(ctx, signer, networkID, swarmAddress, addr, addressbook, stateStore, lightNodes, logger, tracer, libp2pOpts)
 	if err != nil {
 		return nil, fmt.Errorf("p2p service: %w", err)
 	}
@@ -616,7 +625,12 @@ func NewBee(
 	b.p2pService = p2ps
 	b.p2pHalter = p2ps
 
-	post, err := postage.NewService(logger, stamperStore, batchStore, chainID)
+	// Publish the local chequebook so handshake records carry it.
+	// noOpChequebookService returns the zero address — meaning "absent" by
+	// construction, so no conditional is needed here.
+	p2ps.SetChequebookAddress(chequebookService.Address())
+
+	post, err := postage.NewService(logger, stamperStore, batchStore, chainID, wasClean)
 	if err != nil {
 		return nil, fmt.Errorf("postage service: %w", err)
 	}
@@ -629,7 +643,6 @@ func NewBee(
 		eventListener               postage.Listener
 	)
 
-	chainCfg, found := config.GetByChainID(chainID)
 	postageStampContractAddress, postageSyncStart := chainCfg.PostageStampAddress, chainCfg.PostageStampStartBlock
 	if o.PostageContractAddress != "" {
 		if !common.IsHexAddress(o.PostageContractAddress) {
@@ -651,6 +664,13 @@ func NewBee(
 		return nil, fmt.Errorf("lookup erc20 postage address: %w", err)
 	}
 
+	// Compute gas limit for contract transactions: when TrxDebugMode is enabled,
+	// gas estimation is skipped and DefaultGasLimit is used for all contract calls.
+	var contractGasLimit uint64
+	if o.TrxDebugMode {
+		contractGasLimit = transaction.DefaultGasLimit
+	}
+
 	postageStampContractService = postagecontract.New(
 		overlayEthAddress,
 		postageStampContractAddress,
@@ -660,7 +680,7 @@ func NewBee(
 		post,
 		batchStore,
 		chainEnabled,
-		o.TrxDebugMode,
+		contractGasLimit,
 	)
 
 	eventListener = listener.New(b.syncingStopped, logger, chainBackend, postageStampContractAddress, postageStampContractABI, o.BlockTime, postageSyncingStallingTimeout, postageSyncingBackoffTimeout)
@@ -678,7 +698,15 @@ func NewBee(
 		return nil, fmt.Errorf("pingpong service: %w", err)
 	}
 
-	hive := hive.New(p2ps, addressbook, networkID, o.BootnodeMode, o.AllowPrivateCIDRs, swarmAddress, logger)
+	hiveOpts := hive.Options{
+		BootnodeMode:       o.BootnodeMode,
+		AllowPrivateCIDRs:  o.AllowPrivateCIDRs,
+		ChequebookVerifier: cbVerifier,
+	}
+	if cbRegistry != nil {
+		hiveOpts.ChequebookStorer = cbRegistry
+	}
+	hive := hive.New(p2ps, addressbook, networkID, swarmAddress, logger, hiveOpts)
 
 	if err = p2ps.AddProtocol(hive.Protocol()); err != nil {
 		return nil, fmt.Errorf("hive service: %w", err)
@@ -772,7 +800,7 @@ func NewBee(
 		if err != nil {
 			logger.Error(err, "failed to initialize batch service from snapshot, continuing outside snapshot block...")
 		} else {
-			err = snapshotBatchSvc.Start(ctx, postageSyncStart, initBatchState)
+			err = snapshotBatchSvc.Start(ctx, postageSyncStart)
 			syncStatus.Store(true)
 			if err != nil {
 				syncErr.Store(err)
@@ -800,7 +828,7 @@ func NewBee(
 		}
 
 		if o.FullNodeMode {
-			err = batchSvc.Start(ctx, postageSyncStart, initBatchState)
+			err = batchSvc.Start(ctx, postageSyncStart)
 			syncStatus.Store(true)
 			if err != nil {
 				syncErr.Store(err)
@@ -809,7 +837,7 @@ func NewBee(
 		} else {
 			go func() {
 				logger.Info("started postage contract data sync in the background...")
-				err := batchSvc.Start(ctx, postageSyncStart, initBatchState)
+				err := batchSvc.Start(ctx, postageSyncStart)
 				syncStatus.Store(true)
 				if err != nil {
 					syncErr.Store(err)
@@ -1041,7 +1069,7 @@ func NewBee(
 		stakingContractAddress = common.HexToAddress(o.StakingContractAddress)
 	}
 
-	stakingContract := staking.New(overlayEthAddress, stakingContractAddress, abiutil.MustParseABI(chainCfg.StakingABI), bzzTokenAddress, transactionService, common.BytesToHash(nonce), o.TrxDebugMode, uint8(o.ReserveCapacityDoubling))
+	stakingContract := staking.New(overlayEthAddress, stakingContractAddress, abiutil.MustParseABI(chainCfg.StakingABI), bzzTokenAddress, transactionService, common.BytesToHash(nonce), contractGasLimit, uint8(o.ReserveCapacityDoubling))
 
 	if chainEnabled {
 
@@ -1087,7 +1115,8 @@ func NewBee(
 		pullerService = puller.New(swarmAddress, stateStore, kad, localStore, pullSyncProtocol, p2ps, logger, puller.Options{})
 		b.pullerCloser = pullerService
 
-		localStore.StartReserveWorker(ctx, pullerService, waitNetworkRFunc)
+		// we pass an empty channel since startup synchronization is not needed for production code, only tests.
+		localStore.StartReserveWorker(ctx, pullerService, waitNetworkRFunc, nil)
 		nodeStatus.SetSync(pullerService)
 
 		// measure full sync duration
@@ -1131,7 +1160,7 @@ func NewBee(
 				redistributionContractAddress = common.HexToAddress(o.RedistributionContractAddress)
 			}
 
-			redistributionContract := redistribution.New(swarmAddress, overlayEthAddress, logger, transactionService, redistributionContractAddress, abiutil.MustParseABI(chainCfg.RedistributionABI), o.TrxDebugMode)
+			redistributionContract := redistribution.New(swarmAddress, overlayEthAddress, logger, transactionService, redistributionContractAddress, abiutil.MustParseABI(chainCfg.RedistributionABI), contractGasLimit)
 
 			isFullySynced := func() bool {
 				reserveThreshold := reserveCapacity * 5 / 10
@@ -1406,9 +1435,11 @@ func (b *Bee) Shutdown() error {
 	tryClose(b.tracerCloser, "tracer")
 	tryClose(b.topologyCloser, "topology driver")
 	tryClose(b.storageIncetivesCloser, "storage incentives agent")
+	tryClose(b.stabilizationDetector, "stabilization detector")
+	// close localstore before StateStore to avoid ErrClosed / incomplete flush.
+	tryClose(b.localstoreCloser, "localstore")
 	tryClose(b.stateStoreCloser, "statestore")
 	tryClose(b.stamperStoreCloser, "stamperstore")
-	tryClose(b.localstoreCloser, "localstore")
 	tryClose(b.resolverCloser, "resolver service")
 
 	return mErr

@@ -312,6 +312,16 @@ func overlayNonceExists(s storage.StateStorer) ([]byte, bool, error) {
 	return nonce, true, nil
 }
 
+func batchStoreExists(s storage.StateStorer) (bool, error) {
+	hasOne := false
+	err := s.Iterate("batchstore_", func(key, value []byte) (stop bool, err error) {
+		hasOne = true
+		return true, err
+	})
+
+	return hasOne, err
+}
+
 func setOverlay(s storage.StateStorer, overlay swarm.Address, nonce []byte) error {
 	return errors.Join(
 		s.Put(overlayNonce, nonce),

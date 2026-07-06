@@ -2,15 +2,13 @@ module github.com/Solar-Punk-Ltd/bee-lite
 
 exclude github.com/btcsuite/btcd/chaincfg/chainhash v1.0.1 // otherwise there sill be conflict with btcd v0.22.0-beta
 
-go 1.25.0
-
-toolchain go1.25.2
+go 1.26
 
 require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2
 	github.com/ethereum/go-ethereum v1.15.11
-	github.com/ethersphere/batch-archive v0.0.5
-	github.com/ethersphere/bee/v2 v2.7.0
+	github.com/ethersphere/batch-archive v0.0.7
+	github.com/ethersphere/bee/v2 v2.8.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/prometheus/client_golang v1.22.0
@@ -36,6 +34,7 @@ require (
 	github.com/davidlazar/go-crypto v0.0.0-20200604182044-b73af7476f6c // indirect
 	github.com/deckarep/golang-set/v2 v2.6.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
+	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.0 // indirect
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/ethersphere/go-price-oracle-abi v0.6.9 // indirect
@@ -76,7 +75,7 @@ require (
 	github.com/libdns/libdns v0.2.2 // indirect
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/libp2p/go-flow-metrics v0.2.0 // indirect
-	github.com/libp2p/go-libp2p v0.46.0 // indirect
+	github.com/libp2p/go-libp2p v0.47.0 // indirect
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
 	github.com/libp2p/go-msgio v0.3.0 // indirect
 	github.com/libp2p/go-netroute v0.3.0 // indirect
@@ -127,8 +126,8 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/prometheus/statsd_exporter v0.26.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.57.1 // indirect
-	github.com/quic-go/webtransport-go v0.9.0 // indirect
+	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/webtransport-go v0.10.0 // indirect
 	github.com/shirou/gopsutil v3.21.11+incompatible // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/afero v1.9.5 // indirect

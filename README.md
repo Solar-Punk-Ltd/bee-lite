@@ -20,7 +20,6 @@ lo := &beelite.LiteOptions {
     SwapEnable:               true,
     ChequebookEnable:         true,
     DebugAPIEnable:           false,
-    UsePostageSnapshot:       false,
     Mainnet:                  true,
     NetworkID:                1,
     NATAddr:                  "<NAT_ADDRESS>:<PORT>",

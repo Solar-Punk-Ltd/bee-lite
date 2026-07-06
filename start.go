@@ -36,7 +36,6 @@ type LiteOptions struct {
 	PaymentThreshold         string
 	SwapEnable               bool
 	ChequebookEnable         bool
-	UsePostageSnapshot       bool
 	Mainnet                  bool
 	NetworkID                uint64
 	NATAddr                  string
@@ -214,6 +213,11 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		ResolverConnectionCfgs:        []multiresolver.ConnectionConfig{},
 		BootnodeMode:                  bootnodeMode,
 		BlockchainRpcEndpoint:         lo.BlockchainRpcEndpoint,
+		BlockchainRpcDialTimeout:      30 * time.Second,
+		BlockchainRpcTLSTimeout:       10 * time.Second,
+		BlockchainRpcIdleTimeout:      90 * time.Second,
+		BlockchainRpcKeepalive:        30 * time.Second,
+		GasLimitFallback:              500_000,
 		SwapFactoryAddress:            "",
 		SwapInitialDeposit:            lo.SwapInitialDeposit,
 		SwapEnable:                    lo.SwapEnable,
@@ -233,7 +237,6 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		MutexProfile:                  false,
 		StaticNodes:                   staticNodes,
 		AllowPrivateCIDRs:             false,
-		UsePostageSnapshot:            lo.UsePostageSnapshot,
 		EnableStorageIncentives:       true,
 		StatestoreCacheCapacity:       1000000,
 		TargetNeighborhood:            "",

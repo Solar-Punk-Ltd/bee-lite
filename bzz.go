@@ -139,7 +139,7 @@ func (bl *Beelite) AddFileBzz(parentContext context.Context,
 
 func (bl *Beelite) GetBzz(parentContext context.Context, address swarm.Address, publisher *ecdsa.PublicKey, historyAddress *swarm.Address, timestamp *int64) (io.Reader, string, error) {
 	cache := true
-	ls := loadsave.NewReadonly(bl.storer.Download(cache), bl.storer.Cache(), redundancy.DefaultLevel)
+	ls := loadsave.NewReadonly(bl.storer.Download(cache), bl.storer.Cache(), redundancy.DefaultDownloadLevel)
 	feedDereferenced := false
 
 	ctx := parentContext
@@ -203,7 +203,7 @@ FETCH:
 			if ok {
 				fname = filepath.Base(fname) // only keep the file name
 			}
-			reader, _, err := joiner.New(ctx, bl.storer.Download(cache), bl.storer.Cache(), indexDocumentManifestEntry.Reference(), redundancy.DefaultLevel)
+			reader, _, err := joiner.New(ctx, bl.storer.Download(cache), bl.storer.Cache(), indexDocumentManifestEntry.Reference(), redundancy.DefaultDownloadLevel)
 			if err != nil {
 				if errors.Is(err, storage.ErrNotFound) {
 					return nil, "", fmt.Errorf("api download: not found : %w", err)

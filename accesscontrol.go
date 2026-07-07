@@ -23,7 +23,7 @@ func (bl *Beelite) actDecryptionHandler(ctx context.Context, reference swarm.Add
 		ts = *timestamp
 	}
 
-	ls := loadsave.NewReadonly(bl.storer.Download(cache), bl.storer.Cache(), redundancy.DefaultLevel)
+	ls := loadsave.NewReadonly(bl.storer.Download(cache), bl.storer.Cache(), redundancy.DefaultDownloadLevel)
 	decryptedRef, err := bl.accesscontrol.DownloadHandler(ctx, ls, reference, publisher, *historyAddress, ts)
 	if err != nil {
 		bl.logger.Error(err, "access control download failed")

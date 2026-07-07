@@ -45,6 +45,7 @@ type LiteOptions struct {
 	DBBlockCacheCapacity     uint64
 	DBDisableSeeksCompaction bool
 	RetrievalCaching         bool
+	Resync                   bool
 }
 
 type buildBeeliteNodeResp struct {
@@ -217,6 +218,7 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		BlockchainRpcTLSTimeout:       10 * time.Second,
 		BlockchainRpcIdleTimeout:      90 * time.Second,
 		BlockchainRpcKeepalive:        30 * time.Second,
+		BlockSyncInterval:             10,
 		GasLimitFallback:              500_000,
 		SwapFactoryAddress:            "",
 		SwapInitialDeposit:            lo.SwapInitialDeposit,
@@ -232,7 +234,7 @@ func buildBeeNode(ctx context.Context, lo *LiteOptions, password string, beelogg
 		WarmupTime:                    0,
 		ChainID:                       networkCfg.chainID,
 		RetrievalCaching:              lo.RetrievalCaching,
-		Resync:                        false,
+		Resync:                        lo.Resync,
 		BlockProfile:                  false,
 		MutexProfile:                  false,
 		StaticNodes:                   staticNodes,

@@ -157,9 +157,8 @@ func getConfigByNetworkID(networkID uint64) *networkConfig {
 }
 
 var (
-	errBatchUnusable               = errors.New("batch not usable")
-	errUnsupportedDevNodeOperation = errors.New("operation not supported in dev mode")
-	errInvalidPostageBatch         = errors.New("invalid postage batch id")
+	errBatchUnusable       = errors.New("batch not usable")
+	errInvalidPostageBatch = errors.New("invalid postage batch id")
 )
 
 func (p *putterSessionWrapper) Put(ctx context.Context, chunk swarm.Chunk) error {
@@ -210,10 +209,6 @@ func (bl *Beelite) getStamper(batchID []byte) (postage.Stamper, func() error, er
 }
 
 func (bl *Beelite) newStamperPutter(ctx context.Context, opts putterOptions) (storer.PutterSession, error) {
-	if !opts.Deferred && bl.BeeNodeMode() == api.DevMode {
-		return nil, errUnsupportedDevNodeOperation
-	}
-
 	stamper, save, err := bl.getStamper(opts.BatchID)
 	if err != nil {
 		return nil, fmt.Errorf("get stamper: %w", err)
@@ -238,10 +233,6 @@ func (bl *Beelite) newStamperPutter(ctx context.Context, opts putterOptions) (st
 }
 
 func (bl *Beelite) newStampedPutter(ctx context.Context, opts putterOptions, stamp *postage.Stamp) (storer.PutterSession, error) {
-	if !opts.Deferred && bl.BeeNodeMode() == api.DevMode {
-		return nil, errUnsupportedDevNodeOperation
-	}
-
 	storedBatch, err := bl.batchStore.Get(stamp.BatchID())
 	if err != nil {
 		return nil, errInvalidPostageBatch
